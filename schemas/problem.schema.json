@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/kunyuan/open-research-discovery/schemas/problem.schema.json",
-  "title": "Open research problem (Problem Schema v1.0)",
-  "description": "A source-grounded, currently open, independently reviewable research problem, following docs/problem-schema-v1.0.md plus the minimal pipeline fields (status, domain, topic_id, repository).",
+  "title": "Open research problem (Problem Schema v1.0 / v1.1)",
+  "description": "A source-grounded, currently open, independently reviewable research problem. Schema 1.1 adds a bounded problem window and human-expert verification coverage while retaining 1.0 compatibility.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -39,11 +39,62 @@
           "verification_difficulty": {"type": "object"}
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema_version": {"const": "1.1"}
+        },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "required": [
+          "problem_kind",
+          "source_relation",
+          "expertise_required"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "problem_kind": {"const": "meta_problem"}
+              },
+              "required": ["problem_kind"]
+            },
+            "then": {
+              "properties": {
+                "subproblem_ids": {"minItems": 1},
+                "verification_contract": {"const": null},
+                "verification_difficulty": {"const": null}
+              }
+            },
+            "else": {
+              "required": [
+                "resolution_claim",
+                "scope",
+                "obligations"
+              ],
+              "properties": {
+                "verification_contract": {
+                  "additionalProperties": {
+                    "required": [
+                      "resolution_scope",
+                      "covers",
+                      "contract",
+                      "ci_contract"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
     }
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0"
+      "enum": ["1.0", "1.1"]
     },
     "problem_id": {
       "type": "string",
@@ -57,6 +108,71 @@
     "subproblem_ids": {
       "type": "array",
       "items": {"type": "string", "pattern": "^ORP-[0-9]{4,}$"}
+    },
+    "problem_kind": {
+      "description": "meta_problem preserves a broad literature question; leaf_problem is a single expert-verifiable resolution target; progress_target is valuable partial progress that cannot close its parent.",
+      "enum": ["meta_problem", "leaf_problem", "progress_target"]
+    },
+    "source_relation": {
+      "description": "How this formulation relates to its literature source or parent problem.",
+      "enum": ["original", "derived", "surviving_core"]
+    },
+    "resolution_claim": {
+      "description": "One sentence stating the single scientific proposition whose establishment or refutation resolves this record.",
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "description": "Closed problem window for expert review; it records the object, regime, quantifier spine, and explicit exclusions without making the problem artificially easy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object", "regime", "quantifier", "exclusions"],
+      "properties": {
+        "object": {"type": "string", "minLength": 1},
+        "regime": {"type": "string", "minLength": 1},
+        "quantifier": {
+          "enum": [
+            "exists",
+            "forall",
+            "classification",
+            "asymptotic",
+            "mechanism",
+            "construction",
+            "measurement"
+          ]
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "obligations": {
+      "description": "Load-bearing requirements for a complete resolution. Independent publishable directions should normally be split into separate records.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "requirement",
+          "load_bearing",
+          "independently_publishable"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^O[1-9][0-9]*$"},
+          "requirement": {"type": "string", "minLength": 1},
+          "load_bearing": {"type": "boolean"},
+          "independently_publishable": {"type": "boolean"}
+        }
+      }
+    },
+    "expertise_required": {
+      "description": "Expert domains needed to determine whether a submission resolves the claim. Human expert review is sufficient; AI or CI verification is not required.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
     },
     "title": {
       "type": "string",
@@ -123,8 +239,19 @@
         "additionalProperties": false,
         "required": ["contract", "ci_contract"],
         "properties": {
+          "resolution_scope": {
+            "description": "full closes the current leaf/progress record; partial_progress is valuable but cannot close the record. Closing a progress_target never closes its parent.",
+            "enum": ["full", "partial_progress"]
+          },
+          "covers": {
+            "description": "Obligation IDs addressed by this answer type.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^O[1-9][0-9]*$"}
+          },
           "contract": {
-            "description": "What an answer of this type must submit and what the reviewer checks to pass or fail it.",
+            "description": "What an answer submits and what a qualified domain expert checks. The core claim may require proof review, scientific judgment, or independent replication; AI or CI verification is not required.",
             "type": "string",
             "minLength": 1
           },

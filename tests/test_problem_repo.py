@@ -113,6 +113,52 @@ def test_rendered_problem_readme_contains_narrative_contract(tmp_path: Path) -> 
     assert r"\[" not in text
 
 
+def test_rendered_v11_problem_exposes_window_and_contract_coverage() -> None:
+    root = Path(__file__).resolve().parents[1]
+    problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
+    problem.update(
+        {
+            "schema_version": "1.1",
+            "problem_kind": "leaf_problem",
+            "source_relation": "derived",
+            "resolution_claim": "Determine whether the stated phase exists in the closed regime.",
+            "scope": {
+                "object": "The declared local Hamiltonian family",
+                "regime": "Zero temperature and the stated coupling interval",
+                "quantifier": "exists",
+                "exclusions": ["Long-range perturbations"],
+            },
+            "obligations": [
+                {
+                    "id": "O1",
+                    "requirement": "Establish or rule out the phase in the stated regime.",
+                    "load_bearing": True,
+                    "independently_publishable": False,
+                }
+            ],
+            "expertise_required": ["quantum many-body theory"],
+            "verification_contract": {
+                "proof": {
+                    "resolution_scope": "full",
+                    "covers": ["O1"],
+                    "contract": "A qualified expert checks the assumptions and proof.",
+                    "ci_contract": None,
+                }
+            },
+        }
+    )
+
+    text = render_problem_readme(problem)
+
+    assert "**Resolution claim:** Determine whether" in text
+    assert "**Problem kind:** `leaf_problem`" in text
+    assert "- Quantifier: `exists`" in text
+    assert "`O1`: Establish or rule out the phase" in text
+    assert "quantum many-body theory" in text
+    assert "Resolution scope: `full`; covers: `O1`" in text
+    assert "No CI is currently suggested" in text
+
+
 def test_problem_explanation_supports_nonmathematical_academic_prose() -> None:
     root = Path(__file__).resolve().parents[1]
     problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")

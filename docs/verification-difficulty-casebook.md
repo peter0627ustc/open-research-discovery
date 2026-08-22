@@ -4,8 +4,10 @@
 reviewer after every mechanically delegable check has been delegated. It does
 not measure the difficulty of finding the answer.
 
-Score the cheapest sound verification path the contract permits — not the
-solver's path, and not the scientific difficulty of discovering the answer.
+Score the cheapest sound **full-resolution** path the contract permits — not
+the solver's path, and not the scientific difficulty of discovering the
+answer. A `partial_progress` branch never lowers the score for resolving the
+current record.
 
 ## Verification modes
 
@@ -137,7 +139,7 @@ coverage judgments can still score 0.
 
 ## Pipeline rule
 
-The Research audit records, per Problem Schema v1.0:
+The Research audit records, per Problem Schema v1.1:
 
 - `verification_difficulty` — one 0-10 `score` for the whole problem plus its
   `rationale`;
@@ -152,6 +154,10 @@ remains visible as reviewer-workload metadata. Publication instead requires an
 accepted Problem Reviewer verdict on a currently open problem. A high-score
 problem may be published; a problem whose contract the reviewer cannot accept
 is archived in the run directory.
+
+Quality benchmarking likewise does not deduct points merely for a high score,
+human-only proof review, expert finite-size judgment, or `ci_contract: null`.
+It asks whether the problem window and the expert review task are clear.
 
 The Research Agent scores the surviving open core after the literature
 audit. The Problem Reviewer checks that the score is supported and that any

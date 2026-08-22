@@ -84,6 +84,27 @@ def _selected_candidate(
     return {
         "canonical_title": title,
         "canonical_statement": statement,
+        "candidate_kind": "leaf_problem",
+        "source_relation": "original",
+        "resolution_claim": statement,
+        "scope": {
+            "object": "the finite model fixed by the source",
+            "regime": "the stated parameter regime",
+            "quantifier": "exists",
+            "exclusions": [],
+        },
+        "obligations": [
+            {
+                "id": "O1",
+                "requirement": "Resolve the stated scoped target.",
+                "load_bearing": True,
+                "independently_publishable": False,
+            }
+        ],
+        "expertise_required": ["quantum many-body physics"],
+        "decomposition_rationale": (
+            "The candidate has one scoped physical resolution claim."
+        ),
         "domain": "physics",
         "source_keys": [source_key],
         "importance_level": importance,
@@ -221,6 +242,8 @@ def _assessment(candidate_id: str, *, finite: bool) -> dict[str, Any]:
     ]
     contract = {
         answer_type: {
+            "resolution_scope": "full",
+            "covers": ["O1"],
             "contract": (
                 "Accept only after an independent reviewer checks the fixed "
                 "assumptions, replays the decisive calculation, and confirms "
@@ -248,6 +271,24 @@ def _assessment(candidate_id: str, *, finite: bool) -> dict[str, Any]:
             "the audited literature leaves this scoped target unresolved."
         ],
         "problem_statement": statement,
+        "problem_kind": "leaf_problem",
+        "source_relation": "original",
+        "resolution_claim": statement,
+        "scope": {
+            "object": "the model fixed by the source",
+            "regime": "the stated finite or coupling regime",
+            "quantifier": "exists" if finite else "asymptotic",
+            "exclusions": [],
+        },
+        "obligations": [
+            {
+                "id": "O1",
+                "requirement": "Resolve the stated scoped target.",
+                "load_bearing": True,
+                "independently_publishable": False,
+            }
+        ],
+        "expertise_required": ["quantum many-body physics"],
         "scientific_significance": {
             "affected_field": {
                 "level": "high" if finite else "medium",

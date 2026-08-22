@@ -60,11 +60,18 @@ Dimensions:
 2. openness_argument — the audited openness outcome and the previous-progress
    narrative are genuinely supported by the cited references rather than
    asserted.
-3. scope_fidelity — the problem statement is precise and does not silently
-   narrow or drift from the source question.
-4. verification_executability — the per-type verification contracts are
-   executable as written, with no speculative loopholes, circular criteria,
-   or unverifiable escape hatches.
+3. scope_fidelity — the problem statement is source-faithful and has an
+   appropriate problem window: a leaf record has one closed resolution claim,
+   while a derived or partial target is labeled honestly instead of
+   masquerading as the broader source problem.
+4. verification_executability — a qualified domain expert can tell what an
+   answer submits, which assumptions and evidence must be reviewed, and whether
+   the answer fully resolves the stated claim. Do not require AI or CI to
+   decide the science. Null CI, long proof review, qualitative expert judgment,
+   or the absence of a canonical numeric threshold is not a defect by itself.
+   Penalize only real semantic loopholes: partial progress accepted as full
+   resolution, quantifier mismatch, proxy-task substitution, circularity with
+   no independent evidence task, or an unbounded completion criterion.
 5. evidence_relevance — each cited reference genuinely bears on this
    problem's status or formulation.
 
@@ -81,6 +88,13 @@ empty list when the dimension is sound. Then give an overall grade:
   A = publishable as-is (no major or critical issues);
   B = sound core with minor revisions needed;
   C = major defects; the repository is not trustworthy until fixed.
+
+This is an advisory artifact-quality audit, not an automated scientific
+referee. High verification difficulty and required human expertise do not
+lower a quality score when the problem window and expert decision procedure
+are clear. Schema 1.0 artifacts do not contain the explicit 1.1 problem-window
+fields; assess their statement and contracts semantically and do not deduct
+points solely because those newer metadata fields are absent.
 """
 
 _DUPLICATE_THRESHOLD = 0.8

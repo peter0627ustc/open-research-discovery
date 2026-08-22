@@ -22,8 +22,10 @@ VERIFICATION_DIFFICULTY_RUBRIC = (
     "that witness, never the cost of constructing it: construction is the "
     "solver's discovery burden, not the reviewer's verification burden. An "
     "either-or contract, such as prove-or-refute, takes the cheapest sound "
-    "branch, so do not score it by the derivation a proof would need when a "
-    "counterexample would be checked directly. Score 0 when every "
+    "full-resolution branch, so do not score it by the derivation a proof "
+    "would need when a counterexample would be checked directly. A partial-"
+    "progress branch never lowers the score for resolving the problem. Score "
+    "0 when every "
     "load-bearing claim is "
     "discharged by M, R, or C and specification fidelity is trivial, meaning the "
     "formal statement, protocol, or target is pinned by the contract or directly "
@@ -51,7 +53,10 @@ VERIFICATION_DIFFICULTY_RUBRIC = (
     "separately: it records how much of the delegable checking has been "
     "automated, not the structural difficulty. CI cannot lower the score, but a "
     "better contract design, such as required certificates or pinned formal "
-    "statements, can."
+    "statements, can. A high score is reviewer-workload metadata, not a quality "
+    "defect: long proof review, expert assessment of finite-size evidence, or "
+    "holistic experimental judgment is acceptable when the problem window and "
+    "expert decision task are explicit."
 )
 
 STATUS_ORDER = {

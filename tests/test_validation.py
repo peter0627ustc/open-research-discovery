@@ -21,6 +21,72 @@ def test_draft_fixture_validates_against_v1_schema(tmp_path: Path) -> None:
     assert problem["repository"] == {"kind": "solution", "slug": "pending"}
 
 
+def test_v11_leaf_problem_requires_and_accepts_a_closed_window(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
+    problem.update(
+        {
+            "schema_version": "1.1",
+            "problem_id": "ORP-0001",
+            "problem_kind": "leaf_problem",
+            "source_relation": "derived",
+            "resolution_claim": "Determine whether the declared phase exists.",
+            "scope": {
+                "object": "The declared local Hamiltonian family",
+                "regime": "The stated coupling interval at zero temperature",
+                "quantifier": "exists",
+                "exclusions": [],
+            },
+            "obligations": [
+                {
+                    "id": "O1",
+                    "requirement": "Establish or rule out the phase.",
+                    "load_bearing": True,
+                    "independently_publishable": False,
+                }
+            ],
+            "expertise_required": ["quantum many-body theory"],
+            "verification_contract": {
+                "proof": {
+                    "resolution_scope": "full",
+                    "covers": ["O1"],
+                    "contract": "A domain expert reviews the assumptions and proof.",
+                    "ci_contract": None,
+                }
+            },
+        }
+    )
+    path = tmp_path / "problem.yaml"
+    dump_yaml(path, problem)
+
+    assert validate_problem(path, root / "schemas" / "problem.schema.json") == []
+
+
+def test_v11_meta_problem_delegates_without_a_solution_contract(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
+    problem.update(
+        {
+            "schema_version": "1.1",
+            "problem_id": "ORP-0001",
+            "subproblem_ids": ["ORP-0002"],
+            "problem_kind": "meta_problem",
+            "source_relation": "original",
+            "expertise_required": ["quantum many-body theory"],
+            "verification_contract": None,
+            "verification_difficulty": None,
+        }
+    )
+    path = tmp_path / "problem.yaml"
+    dump_yaml(path, problem)
+
+    assert validate_problem(path, root / "schemas" / "problem.schema.json") == []
+
+
 def test_ready_problem_requires_references_and_previous_progress(
     tmp_path: Path,
 ) -> None:

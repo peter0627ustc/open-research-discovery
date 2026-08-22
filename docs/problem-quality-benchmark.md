@@ -19,17 +19,29 @@ with concrete issues (`type`/`severity`/`detail`) and an overall grade:
    when cross-checked against the frozen citation metadata.
 2. **openness_argument** — the openness conclusion and the surviving open
    core are genuinely supported by the cited audit evidence.
-3. **scope_fidelity** — the statement is precise, does not silently narrow
-   or drift, and any named-problem or lineage narrative in `background` and
-   `previous_progress` is truthful.
-4. **verification_executability** — the verification standard is executable
-   as written, with no speculative loopholes.
+3. **scope_fidelity** — the statement is source-faithful and has an
+   appropriate problem window: a leaf record has one closed resolution claim,
+   while a derived or partial target is labeled honestly.
+4. **verification_executability** — retained as a backward-compatible field
+   name, but scored as expert resolution clarity: a qualified domain expert
+   can identify the submission, review task, and full-resolution boundary.
+   AI/CI execution and fixed numeric thresholds are not required.
 5. **evidence_relevance** — each evidence item genuinely bears on this
    problem; Direct/Adjacent-style framing is not inflated.
 
 Grades: **A** = publishable as-is (no major issues); **B** = sound core with
 minor revisions; **C** = major defects. A separate deterministic layer
 (mechanical checks, below) catches defect classes that need no judgment.
+
+This benchmark is advisory and human-expert oriented. Do not lower a score
+merely because `ci_contract` is null, verification difficulty is high, a long
+proof must be reviewed, finite-size evidence needs specialist judgment, or no
+pre-existing standard answer exists. Continue to penalize semantic defects:
+partial progress accepted as full resolution, quantifier mismatch, an omnibus
+leaf problem, proxy-task substitution, or an unbounded completion criterion.
+For backward-compatible Schema 1.0 records, infer the problem window from the
+statement and contracts; the absence of new 1.1 metadata is not itself a
+defect.
 
 ## Building a dataset (networked, once per version)
 

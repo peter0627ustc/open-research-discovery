@@ -106,7 +106,7 @@ def normalize_github_math(text: str) -> str:
 
 
 def render_problem_readme(problem: dict[str, Any]) -> str:
-    """Render the human-facing projection of a Problem Schema v1.0 record."""
+    """Render the human-facing projection of a Problem Schema record."""
 
     significance = problem.get("scientific_significance") or {}
     affected = significance.get("affected_field") or {}
@@ -142,6 +142,47 @@ def render_problem_readme(problem: dict[str, Any]) -> str:
         for item in problem.get("references") or []
         if str(item).strip()
     ]
+    problem_window: list[str] = []
+    resolution_claim = str(problem.get("resolution_claim") or "").strip()
+    if resolution_claim:
+        scope = problem.get("scope") or {}
+        problem_window.extend(
+            [
+                f"**Resolution claim:** {_public_text(resolution_claim)}",
+                "",
+                f"**Problem kind:** `{_text(problem.get('problem_kind'))}`; "
+                f"**source relation:** `{_text(problem.get('source_relation'))}`.",
+                "",
+                "**Closed scope:**",
+                "",
+                f"- Object: {_public_text(scope.get('object'), '')}",
+                f"- Regime: {_public_text(scope.get('regime'), '')}",
+                f"- Quantifier: `{_text(scope.get('quantifier'))}`",
+            ]
+        )
+        exclusions = list(scope.get("exclusions") or [])
+        if exclusions:
+            problem_window.append(
+                "- Exclusions: " + "; ".join(str(value) for value in exclusions)
+            )
+        obligations = list(problem.get("obligations") or [])
+        if obligations:
+            problem_window.extend(["", "**Load-bearing obligations:**", ""])
+            problem_window.extend(
+                f"- `{item.get('id')}`: {_public_text(item.get('requirement'), '')}"
+                for item in obligations
+                if item.get("load_bearing")
+            )
+        expertise = list(problem.get("expertise_required") or [])
+        if expertise:
+            problem_window.extend(
+                [
+                    "",
+                    "**Expertise required for review:** "
+                    + "; ".join(str(value) for value in expertise),
+                    "",
+                ]
+            )
 
     lines = [
         f"# {_text(problem.get('title'), 'Open Research Problem')}",
@@ -156,6 +197,7 @@ def render_problem_readme(problem: dict[str, Any]) -> str:
         "",
         _public_text(problem.get("problem_statement")),
         "",
+        *problem_window,
         (
             "The verification contract below evaluates answers to this statement. "
             "It does not narrow or redefine the research question."
@@ -205,10 +247,20 @@ def render_problem_readme(problem: dict[str, Any]) -> str:
     )
     for answer_type, entry in contract.items():
         entry = entry or {}
+        resolution_scope = str(entry.get("resolution_scope") or "").strip()
+        covers = [str(value) for value in entry.get("covers") or []]
+        coverage_lines = []
+        if resolution_scope:
+            coverage_lines = [
+                f"Resolution scope: `{resolution_scope}`; covers: "
+                + (", ".join(f"`{value}`" for value in covers) or "none"),
+                "",
+            ]
         lines.extend(
             [
                 f"### {_text(answer_type, 'answer type')}",
                 "",
+                *coverage_lines,
                 _public_text(entry.get("contract"), "Not yet specified."),
                 "",
             ]
@@ -244,7 +296,7 @@ def render_problem_readme(problem: dict[str, Any]) -> str:
             lines.extend(
                 [
                     "No CI is currently suggested for this answer type; "
-                    "evaluation relies on reviewer judgment.",
+                    "evaluation relies on qualified domain-expert judgment.",
                     "",
                 ]
             )

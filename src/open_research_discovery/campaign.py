@@ -453,11 +453,114 @@ def _selection_routing_memory(candidate: dict[str, Any]) -> str:
         [
             f"### {candidate['canonical_title']}",
             f"- Statement: {candidate['canonical_statement']}",
+            f"- Candidate kind: `{candidate.get('candidate_kind', 'legacy')}`",
+            f"- Source relation: `{candidate.get('source_relation', 'legacy')}`",
+            f"- Resolution claim: {candidate.get('resolution_claim', candidate['canonical_statement'])}",
+            f"- Scope: {json.dumps(candidate.get('scope', {}), ensure_ascii=False)}",
+            "- Obligations: "
+            + json.dumps(candidate.get("obligations", []), ensure_ascii=False),
+            "- Expertise required: "
+            + ", ".join(
+                str(value) for value in candidate.get("expertise_required", [])
+            ),
+            f"- Decomposition: {candidate.get('decomposition_rationale', 'legacy candidate')}",
             f"- Importance: `{candidate['importance_level']}`",
             f"- Source keys: {source_keys}",
             f"- Assessment: {candidate['assessment']}",
         ]
     )
+
+
+def _problem_window_errors(problem: dict[str, Any]) -> list[str]:
+    """Return semantic problem-window and contract-coverage defects.
+
+    JSON Schema validates the shapes. These checks enforce relationships that
+    the schema cannot express: unique obligation IDs, one complete answer
+    branch for a leaf/progress record, and full coverage of every load-bearing
+    obligation. Human expert review remains valid; this function does not
+    require CI, numerical thresholds, or mechanically decidable science.
+    """
+
+    errors: list[str] = []
+    common_required = (
+        "problem_kind",
+        "source_relation",
+        "expertise_required",
+    )
+    missing = [field for field in common_required if field not in problem]
+    if missing:
+        return ["missing problem-window fields: " + ", ".join(missing)]
+
+    kind = str(problem.get("problem_kind") or "")
+    contract = problem.get("verification_contract")
+    if kind == "meta_problem":
+        if not problem.get("subproblem_ids"):
+            errors.append("meta_problem must delegate to at least one subproblem")
+        if contract is not None:
+            errors.append(
+                "meta_problem must delegate resolution instead of defining "
+                "leaf answer contracts"
+            )
+        return errors
+
+    leaf_required = ("resolution_claim", "scope", "obligations")
+    missing = [field for field in leaf_required if field not in problem]
+    if missing:
+        return ["missing leaf problem-window fields: " + ", ".join(missing)]
+
+    obligations = list(problem.get("obligations") or [])
+    obligation_ids = [str(item.get("id") or "") for item in obligations]
+    if len(obligation_ids) != len(set(obligation_ids)):
+        errors.append("obligation IDs must be unique")
+    load_bearing = {
+        str(item.get("id") or "")
+        for item in obligations
+        if bool(item.get("load_bearing"))
+    }
+    if not load_bearing:
+        errors.append("at least one obligation must be load-bearing")
+    if kind == "leaf_problem":
+        separable = [
+            str(item.get("id") or "")
+            for item in obligations
+            if item.get("load_bearing") and item.get("independently_publishable")
+        ]
+        if separable:
+            errors.append(
+                "leaf problem contains independently publishable load-bearing "
+                "obligations that must be split: " + ", ".join(separable)
+            )
+
+    if not isinstance(contract, dict) or not contract:
+        errors.append("leaf/progress problem requires answer contracts")
+        return errors
+
+    full_cover_found = False
+    known_ids = set(obligation_ids)
+    for answer_type, entry in contract.items():
+        if not isinstance(entry, dict):
+            continue
+        covers = {str(value) for value in entry.get("covers") or []}
+        unknown = sorted(covers - known_ids)
+        if unknown:
+            errors.append(
+                f"answer type {answer_type!r} covers unknown obligations: "
+                + ", ".join(unknown)
+            )
+        if entry.get("resolution_scope") == "full":
+            missing_load_bearing = sorted(load_bearing - covers)
+            if missing_load_bearing:
+                errors.append(
+                    f"full answer type {answer_type!r} misses load-bearing "
+                    "obligations: " + ", ".join(missing_load_bearing)
+                )
+            else:
+                full_cover_found = True
+    if not full_cover_found:
+        errors.append(
+            "at least one full answer type must cover every load-bearing obligation"
+        )
+    return errors
 
 
 
@@ -1443,9 +1546,13 @@ on. Never turn a motivation sentence, broad theme, or
 isolated limitation into a stronger claim. Also never add finite-size,
 parameter, geometry, model-class, method, observable, or answer-form
 restrictions merely to make a lead easier to verify. Preserve the natural
-generality of the source problem. If LKM's representation of a problem looks
-thin or confused, omit the lead — the Research stage verifies primary
-sources later, and it cannot rescue a baseless lead.
+generality of the source problem. When a source summary enumerates several
+future directions, preserve that enumeration and identify which directions
+appear independently publishable instead of synthesizing them into one
+omnibus deliverable. This is a decomposition hint, not permission to invent a
+narrower problem. If LKM's representation of a problem looks thin or
+confused, omit the lead — the Research stage verifies primary sources later,
+and it cannot rescue a baseless lead.
 
 Return at most {leads_limit} problem summaries.
 """.strip()
@@ -1892,28 +1999,41 @@ probability must not affect the selection.
 {_UNTRUSTED_EVIDENCE_NOTICE}
 
 Merge equivalent formulations into one canonical candidate, but do not merge
-merely related problems. Split one source record only when it explicitly
-contains separable open questions or research targets. Each candidate must
-express one scientific claim or question rather than an accidental
-conjunction, but a family-wide or otherwise general target remains one
-candidate when that generality is the point of the source problem. A
-source_key may therefore support more than one candidate. Select an
-orthogonal set of valuable problems; do not pad the list with near-duplicates
-or low-value variations.
+merely related problems. The compiler publishes concrete leaf tasks, not an
+entire research programme disguised as one problem. Split a source record
+whenever it contains independently publishable open questions or targets,
+even when the source presents them under one outlook heading. A source_key may
+therefore support more than one candidate. Each candidate has one
+`resolution_claim`: one scientific proposition whose establishment or
+refutation resolves that candidate. Multiple technical requirements may stay
+together only when they are inseparable evidence for that same proposition.
+Use `progress_target` when the candidate is explicitly valuable partial
+progress toward a broader source question; never present it as closing the
+broader question. Select an orthogonal set of valuable problems; do not pad
+the list with near-duplicates or low-value variations.
 
 These records are LKM-derived: dedicated open_questions text copied by the
 deterministic ingestion, or LKM-based discovery summaries with their
 reference lists. Both may carry LKM misunderstanding; flag any summary that
 looks confused in `assessment` rather than trying to resolve it yourself.
-Preserve the natural generality,
-objects, assumptions, and quantifiers of the literature question. Do not add a
-finite size, parameter interval, geometry, model subclass, observable, method,
-or answer form merely to make verification easier. A broad scientific question
-may remain broad when the literature itself poses it that way and a complete
-answer can be recognized at that level. Split only genuinely conjunctive
-questions along boundaries supported by the source context. A restricted
-special case is a derived problem and must never replace or masquerade as its
-parent.
+Preserve the natural generality, objects, assumptions, and quantifiers of the
+literature question in source context. Do not invent a favorable finite size,
+parameter interval, geometry, model subclass, observable, method, or answer
+form merely to make verification easier. But source fidelity does not require
+packing every future direction into one leaf task: derive bounded children
+along boundaries supported by the source, label `source_relation` honestly,
+and explain the split in `decomposition_rationale`. A famous broad problem may
+motivate several derived candidates; no derived candidate may replace or
+masquerade as the parent.
+
+For each candidate, explicitly provide: `candidate_kind`, `source_relation`,
+one `resolution_claim`, a closed `scope` (object, regime, quantifier,
+exclusions), numbered `obligations`, `expertise_required`, and a
+`decomposition_rationale`. Apply the independent-publication test to every
+load-bearing obligation: if completing that obligation alone could form a
+paper while the other obligations remain open, split it into another
+candidate. Mark every load-bearing obligation in a `leaf_problem` as
+`independently_publishable: false` after this test.
 
 When a record names a concrete finite target and then appends an open-ended
 class such as "and related cases", make the concrete target its own candidate.
@@ -1939,7 +2059,10 @@ problem were solved. Never reject or down-rank a scientifically important
 problem merely because independent review is difficult.
 
 Do not propose a method for solving the problem. The Research Agent later
-produces the full verification contract from scratch, so do not output one.
+produces the full expert-verification contract from scratch, so do not output
+one. A problem may be difficult and may require holistic specialist review;
+AI-verifiability, CI availability, expected solve time, and numerical
+threshold availability are not selection criteria.
 The canonical statement must not narrow or redefine the source question.
 Write `assessment` as a free-form screening narrative: why the candidate
 matters, what solving it would change, and any scope or named-problem
@@ -2012,6 +2135,27 @@ Heuristic possible-duplicate pairs:
                 raise CampaignError(
                     "selection candidate source_keys must be unique"
                 )
+            obligations = list(entry.get("obligations") or [])
+            obligation_ids = [str(item.get("id") or "") for item in obligations]
+            if len(obligation_ids) != len(set(obligation_ids)):
+                raise CampaignError(
+                    "selection candidate obligation IDs must be unique",
+                    code=CONTRACT_STRUCTURE,
+                )
+            if entry.get("candidate_kind") == "leaf_problem":
+                separable = [
+                    str(item.get("id") or "")
+                    for item in obligations
+                    if item.get("load_bearing")
+                    and item.get("independently_publishable")
+                ]
+                if separable:
+                    raise CampaignError(
+                        "selection leaf candidate contains independently "
+                        "publishable load-bearing obligations that must be split: "
+                        + ", ".join(separable),
+                        code=CONTRACT_STRUCTURE,
+                    )
         _candidate_ids(output["candidates"])
 
     def _materialize_candidates(
@@ -2274,6 +2418,13 @@ Heuristic possible-duplicate pairs:
 
         return {
             "candidate_id": candidate["candidate_id"],
+            "candidate_kind": candidate.get("candidate_kind"),
+            "source_relation": candidate.get("source_relation"),
+            "resolution_claim": candidate.get("resolution_claim"),
+            "scope": candidate.get("scope"),
+            "obligations": candidate.get("obligations"),
+            "expertise_required": candidate.get("expertise_required"),
+            "decomposition_rationale": candidate.get("decomposition_rationale"),
             "importance_level": candidate["importance_level"],
             "assessment": candidate["assessment"],
         }
@@ -2320,7 +2471,7 @@ Heuristic possible-duplicate pairs:
             draft["status"] = _AUDIT_OUTCOME_STATUS[outcome]
         draft.update(
             {
-                "schema_version": "1.0",
+                "schema_version": "1.1",
                 # Placeholder identity: compile allocates the real problem ID.
                 "problem_id": "ORP-0000",
                 "parent_problem_id": None,
@@ -2335,6 +2486,13 @@ Heuristic possible-duplicate pairs:
             raise CampaignError(
                 "Research Agent output failed problem schema validation: "
                 + "; ".join(errors[:8]),
+                code=CONTRACT_STRUCTURE,
+            )
+        window_errors = _problem_window_errors(draft)
+        if window_errors:
+            raise CampaignError(
+                "Research Agent output failed problem-window validation: "
+                + "; ".join(window_errors[:8]),
                 code=CONTRACT_STRUCTURE,
             )
 
@@ -2414,6 +2572,13 @@ Heuristic possible-duplicate pairs:
                 "validation: " + "; ".join(errors[:8]),
                 code=CONTRACT_STRUCTURE,
             )
+        window_errors = _problem_window_errors(merged)
+        if window_errors:
+            raise CampaignError(
+                "Problem Reviewer Agent record failed problem-window "
+                "validation: " + "; ".join(window_errors[:8]),
+                code=CONTRACT_STRUCTURE,
+            )
         value["problem"] = merged
 
     def _research_and_problem_review(
@@ -2470,11 +2635,13 @@ and human readers use it to follow your audit; the pipeline never parses it.
 
 {_UNTRUSTED_EVIDENCE_NOTICE}
 
-Return one JSON object following the problem schema (see
+Return one JSON object following Problem Schema v1.1 (see
 docs/problem-schema-v1.0.md): title, abstract, background, references,
 previous_progress, problem_statement, scientific_significance,
-solution_difficulty, verification_contract, verification_difficulty, plus
-audit_outcome. The pipeline owns and injects every mechanical field
+solution_difficulty, problem_kind, source_relation, resolution_claim, scope,
+obligations, expertise_required, verification_contract,
+verification_difficulty, plus audit_outcome. The pipeline owns and injects
+every mechanical field
 (problem_id, parent_problem_id, subproblem_ids, schema_version, status,
 domain, topic_id, repository) — never invent them.
 
@@ -2484,6 +2651,16 @@ results, and conventions needed to understand it.
 For a famous or named problem, align title and problem_statement with a
 primary or standard authoritative formulation; describe any restricted
 variant as the derived problem it is, never as the famous problem itself.
+The campaign publishes one bounded task per candidate. Set `problem_kind` to
+`leaf_problem` for a complete resolution target or `progress_target` when the
+record is explicitly valuable partial progress toward a broader literature
+problem. Give exactly one `resolution_claim` and a closed `scope` with one
+quantifier spine. Enumerate load-bearing `obligations`. If two obligations
+could each be completed and published while the other remains open, they are
+separate problems: do not accept the omnibus formulation. Report the scope
+conflict rather than hiding it in a partial verification branch. A leaf
+problem's load-bearing obligations must therefore have
+`independently_publishable: false`.
 scientific_significance.affected_field: set level to high only when solving
 the problem would directly change the field's core knowledge, methods, or
 capabilities; medium for clear progress or substantive momentum for follow-up
@@ -2494,11 +2671,17 @@ changes, and whether the impact is direct or indirect.
 solution_difficulty lists the plausible solving difficulties without scores.
 
 verification_contract is keyed by answer type; the keys are the admissible
-answer types. Each entry's contract states what an answer of that type must
-submit and what the reviewer checks to pass or fail it, evaluating an answer
-to the stated problem without narrowing or redefining it. ci_contract is the
-mechanically executable part of that contract, or null when no reasonable
-automated acceptance exists; a claimed CI operation must be direct
+answer types. Each entry declares `resolution_scope` (`full` or
+`partial_progress`) and the obligation IDs it `covers`. At least one `full`
+branch must cover every load-bearing obligation. Each contract states what an
+answer submits and what a qualified domain expert checks to pass or fail it,
+evaluating the stated problem without narrowing or redefining it. Expert proof
+review, assessment of a controlled approximation, finite-size reasoning, and
+experimental causal judgment are valid verification modes; do not demand that
+AI or CI decide the scientific claim. `ci_contract` is only the mechanically
+executable auxiliary part, or null when no reasonable automated check exists;
+null is fully acceptable and carries no quality penalty. A claimed CI
+operation must be direct
 recomputation, a named known terminating procedure with concrete inputs, or
 replay of a submitted artifact — never an oracle like "decide the universal
 property exactly".
@@ -2672,8 +2855,8 @@ wrong years are defects you must fix, and you report how many references
 you corrected in concerns. Check
 the audit outcome,
 the surviving open core, scientific significance, content-level honesty,
-verification difficulty, target fidelity and limitations, and the per-type CI
-contracts. For a named problem, check the record against the
+verification difficulty, target fidelity and limitations, the problem window,
+and the per-type expert-verification contracts. For a named problem, check the record against the
 authoritative formulation quoted in the selection assessment; a scoped variant
 must be presented as the derived problem it is, never as the famous problem
 itself.
@@ -2682,8 +2865,17 @@ Use this exact rubric:
 
 {_UNTRUSTED_EVIDENCE_NOTICE}
 
-Stay source-faithful: never widen or narrow the problem, never change its
-scope to make review cheaper, and never touch the pipeline-owned fields
+Stay source-faithful: never widen or narrow the problem merely to make review
+cheaper. Source fidelity does not justify an omnibus leaf problem: reject a
+leaf whose load-bearing obligations are independently publishable, whose scope
+has multiple unrelated quantifier spines, or whose completion boundary is an
+open-ended research programme. Check that there is one resolution_claim, that
+every full answer type covers every load-bearing obligation, that
+partial_progress cannot close the record, and that a counterexample matches
+the statement's quantifiers. Human expert judgment is sufficient verification.
+Do not penalize null CI, long proof review, non-mechanical finite-size
+reasoning, or the absence of a pre-existing standard answer when a qualified
+specialist can determine whether the stated claim is resolved. Never touch the pipeline-owned fields
 (problem_id, parent_problem_id, subproblem_ids, schema_version,
 domain, topic_id, repository) — the pipeline owns them and rejects any drift.
 You may change exactly one of them: status. If online evidence shows the
@@ -3087,7 +3279,7 @@ and null `problem`.
     ) -> dict[str, Any]:
         """Inject the pipeline-owned fields into the audited problem record.
 
-        Research returns the Problem Schema v1.0 content; compile assigns the
+        Research returns the Problem Schema v1.1 content; compile assigns the
         real problem ID, the allocated repository slug, and the ready status
         for an open record (externally resolved/refuted/uncertain statuses
         pass through unchanged).

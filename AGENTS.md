@@ -22,13 +22,17 @@ construction and evaluation are separate and run only when explicitly requested.
    audit. Topic-search discovery returns LKM-based problem summaries with
    their LKM references; a summary is a lead, not a verified formulation.
 4. Selection works offline over the topic's discovery report only: merge
-   equivalent formulations, keep an orthogonal set of valuable problems, and
+   equivalent formulations, split independently publishable directions, keep
+   an orthogonal set of valuable problems, and
    route by importance. It never accesses the network and never tries to
    verify primary sources, formulations, or current status. Never infer a
    stronger, broader, more universal, or differently scoped claim from an
    isolated sentence, and never narrow a source problem by adding a finite
    size, parameter window, model subclass, method, observable, or answer form
-   merely to make verification easier. For a famous or named problem, align
+   merely to make verification easier. Preserve broad source questions in
+   provenance, but do not compile an entire research programme as one leaf
+   task: every candidate has one closed resolution claim, and every derived or
+   partial target is labeled honestly. For a famous or named problem, align
    the title and statement with a primary or standard authoritative
    formulation quoted from the source context; never present an invented
    tractable variant as the famous problem itself.
@@ -37,17 +41,22 @@ construction and evaluation are separate and run only when explicitly requested.
    source, so confirm the problem against the primary sources (downloading
    papers is allowed) before the openness audit, correct the formulation when
    the paraphrase is wrong, and flag a candidate built on a misreading.
-6. Every final problem carries a `verification_contract` keyed by answer type:
-   each entry states what is submitted, what is checked, and what passes for
-   that answer type, plus an optional `ci_contract` for the mechanically
-   executable part. Verification evaluates an answer to the problem statement;
+6. Every final leaf problem carries a `verification_contract` keyed by answer
+   type: each entry states whether it is a full resolution or partial progress,
+   which load-bearing obligations it covers, what is submitted, and what a
+   qualified domain expert checks. Human proof review, scientific judgment,
+   and independent replication are valid verification; AI or CI need not
+   decide the core claim. `ci_contract` is optional auxiliary automation and a
+   null value does not reduce problem quality. Verification evaluates an answer to the problem statement;
    it must not redefine or artificially restrict that statement. If no faithful
    pass/fail contract can be stated, the Problem Reviewer rejects the candidate
    and it stays archived in the run directory — there is no decomposition
    queue and no cross-campaign re-issuance.
 7. Always record verification difficulty from 0 to 10 (`verification_difficulty`
    score plus rationale) as independent-review burden. The score is never a
-   publication threshold. CI availability and answer type are also never
+   publication or quality threshold. A high score may simply mean that a
+   domain expert must review a long proof, finite-size argument, or
+   experimental causal chain. CI availability and answer type are also never
    admission gates.
 8. Record all naturally acceptable answer types—proof, counterexample,
    construction, simulation, experiment, measurement, dataset, benchmark result,

@@ -183,6 +183,27 @@ def _selection_entry(
     entry = {
         "canonical_title": title,
         "canonical_statement": statement,
+        "candidate_kind": "leaf_problem",
+        "source_relation": "original",
+        "resolution_claim": statement,
+        "scope": {
+            "object": "the finite witness defined by the source",
+            "regime": "the stated finite regime",
+            "quantifier": "exists",
+            "exclusions": [],
+        },
+        "obligations": [
+            {
+                "id": "O1",
+                "requirement": "Establish or refute existence of the witness.",
+                "load_bearing": True,
+                "independently_publishable": False,
+            }
+        ],
+        "expertise_required": ["finite combinatorics"],
+        "decomposition_rationale": (
+            "The source asks one finite existence question with one decisive witness."
+        ),
         "domain": TOPIC_ID,
         "source_keys": [source_key],
         "importance_level": importance,
@@ -262,6 +283,8 @@ def assessment(
     contract: dict[str, Any] = {}
     for answer_type in answer_types or CANONICAL_ANSWER_TYPES:
         contract[answer_type] = {
+            "resolution_scope": "full",
+            "covers": ["O1"],
             "contract": (
                 "Submit a JSON object containing the finite witness; accept "
                 "only when every stated hypothesis checks and the violation "
@@ -293,6 +316,24 @@ def assessment(
             "literature."
         ],
         "problem_statement": statement,
+        "problem_kind": "leaf_problem",
+        "source_relation": "original",
+        "resolution_claim": statement,
+        "scope": {
+            "object": "the finite witness defined by the source",
+            "regime": "the stated finite regime",
+            "quantifier": "exists",
+            "exclusions": [],
+        },
+        "obligations": [
+            {
+                "id": "O1",
+                "requirement": "Establish or refute existence of the witness.",
+                "load_bearing": True,
+                "independently_publishable": False,
+            }
+        ],
+        "expertise_required": ["finite combinatorics"],
         "scientific_significance": {
             "affected_field": {
                 "level": "high",
@@ -314,6 +355,46 @@ def assessment(
             ),
         },
     }
+
+
+def test_problem_window_requires_a_full_branch_covering_all_obligations() -> None:
+    problem = assessment("CAN-000000000001")
+    problem["obligations"].append(
+        {
+            "id": "O2",
+            "requirement": "Establish the second load-bearing conclusion.",
+            "load_bearing": True,
+            "independently_publishable": False,
+        }
+    )
+
+    errors = campaign_mod._problem_window_errors(problem)
+
+    assert any("misses load-bearing obligations: O2" in error for error in errors)
+    assert any("full answer type" in error for error in errors)
+
+
+def test_problem_window_does_not_let_partial_progress_close_a_problem() -> None:
+    problem = assessment("CAN-000000000001")
+    problem["verification_contract"]["counterexample"][
+        "resolution_scope"
+    ] = "partial_progress"
+
+    errors = campaign_mod._problem_window_errors(problem)
+
+    assert any("at least one full answer type" in error for error in errors)
+
+
+def test_problem_window_accepts_human_expert_review_without_ci() -> None:
+    problem = assessment("CAN-000000000001")
+    branch = problem["verification_contract"]["counterexample"]
+    branch["ci_contract"] = None
+    branch["contract"] = (
+        "A qualified specialist reviews the submitted proof, its assumptions, "
+        "and whether the conclusion establishes the stated claim."
+    )
+
+    assert campaign_mod._problem_window_errors(problem) == []
 
 
 class FakeAgentRunner:

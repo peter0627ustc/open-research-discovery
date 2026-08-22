@@ -54,7 +54,7 @@
       }
     },
     "scope_fidelity": {
-      "description": "Statement precision: no silent narrowing or drift from the source question, and any named-problem or lineage narrative in background and previous_progress is truthful.",
+      "description": "Statement precision and problem-window quality: source-faithful, one closed resolution claim for a leaf record, and honest labeling of derived or partial targets. For Schema 1.0, judge the semantic statement rather than penalizing absence of the explicit 1.1 metadata fields.",
       "type": "object",
       "additionalProperties": false,
       "required": ["score", "issues", "rationale"],
@@ -65,7 +65,7 @@
       }
     },
     "verification_executability": {
-      "description": "The verification standard is executable as written, with no speculative loopholes or unverifiable escape hatches.",
+      "description": "A qualified domain expert can determine whether the submitted evidence fully resolves the stated claim. AI/CI execution, fixed numerical thresholds, and low reviewer workload are not required; semantic loopholes and quantifier mismatches remain defects.",
       "type": "object",
       "additionalProperties": false,
       "required": ["score", "issues", "rationale"],

@@ -1,4 +1,4 @@
-# Problem Schema v1.0
+# Problem Schema v1.0 / v1.1
 
 这份 schema 用于描述一个可以交给 Agent 或人类研究者求解，并能由 Agent、CI 或人类 Reviewer 验收的开放科学问题。
 
@@ -6,11 +6,30 @@
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "problem_id": "problem-id",
 
   "parent_problem_id": null,
   "subproblem_ids": [],
+
+  "problem_kind": "leaf_problem",
+  "source_relation": "derived",
+  "resolution_claim": "一句话说明什么科学命题成立或被反驳后，本题即解决。",
+  "scope": {
+    "object": "明确的模型、系统或数学对象",
+    "regime": "参数、维数、极限或实验区间",
+    "quantifier": "exists",
+    "exclusions": []
+  },
+  "obligations": [
+    {
+      "id": "O1",
+      "requirement": "完整答案必须满足的核心要求。",
+      "load_bearing": true,
+      "independently_publishable": false
+    }
+  ],
+  "expertise_required": ["能够审查该结论的专业领域"],
 
   "title": "题目名称",
 
@@ -42,11 +61,15 @@
 
   "verification_contract": {
     "proof": {
+      "resolution_scope": "full",
+      "covers": ["O1"],
       "contract": "该答案类型的具体验收标准。",
       "ci_contract": "其中可以通过 CI 自动执行的验收部分。"
     },
 
     "counterexample": {
+      "resolution_scope": "partial_progress",
+      "covers": ["O1"],
       "contract": "该答案类型的具体验收标准。",
       "ci_contract": null
     }
@@ -65,6 +88,12 @@
 - `problem_id`：问题的稳定标识。
 - `parent_problem_id`：直接父问题；没有父问题时为 `null`。
 - `subproblem_ids`：直接子问题的 ID 列表。
+- `problem_kind`：`meta_problem`、`leaf_problem` 或 `progress_target`。
+- `source_relation`：当前题面是来源原题、派生问题，还是后续进展后剩余的开放核心。
+- `resolution_claim`：leaf/progress 记录的单一解决命题；完整建立或反驳该命题后，本记录即告解决。`meta_problem` 不要求此字段。
+- `scope`：leaf/progress 记录的闭合问题窗口，包括对象、区间、主要量词和排除项。
+- `obligations`：leaf/progress 记录中完整答案必须覆盖的核心义务；可独立发表的方向通常应拆题。
+- `expertise_required`：能够判断该问题是否解决所需的专业领域。AI 或 CI 验收不是必需条件。
 - `title`：简短、明确的题目名称。
 - `abstract`：问题的简短概述。
 - `background`：理解问题所需的背景、定义和已知结果。
@@ -94,10 +123,16 @@
 
 `verification_contract` 是一个以答案类型为键的字典。每个答案类型包含：
 
+- `resolution_scope`：`full` 表示可以关闭当前记录；`partial_progress` 表示有价值但不能关闭当前记录。关闭 `progress_target` 只完成该里程碑，不会关闭其父问题。
+- `covers`：该答案类型覆盖的 obligation ID。
 - `contract`：该类型答案必须提交什么结果和证据，以及 Reviewer 根据什么条件判断通过或不通过。
 - `ci_contract`：该合同中可以通过 CI 自动执行的机械验收部分；没有合理的自动验收方式时为 `null`。
 
+至少一个 `full` 答案类型必须覆盖全部 load-bearing obligations。证明审查、理论推导、有限尺寸论证、实验因果判断和独立复现都可以由领域专家完成；不要求 AI 或 CI 判断核心科学结论。`ci_contract: null` 不代表问题质量较低。
+
 CI 是 Continuous Integration，即答案提交或代码更新后，由系统自动运行的机械验收流程。`ci_contract` 应说明自动检查大致接收什么结果、执行什么验证，以及依据什么条件返回通过或失败。
+
+Schema 1.0 记录仍然向后兼容。新 campaign 输出使用 1.1，并由 pipeline 额外检查 obligation ID、full/partial 覆盖关系和 leaf problem 的问题窗口。
 
 ## Verification difficulty 评分标准
 

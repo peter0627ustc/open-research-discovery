@@ -10,8 +10,9 @@ Campaigns are deliberately broader than a plain LKM-only lookup:
   books, datasets, or user-supplied references;
 - every source-derived problem must preserve the source's actual context and
   intent;
-- literature questions retain their natural generality; verification does not
-  manufacture a tractable restricted substitute;
+- broad literature questions retain their natural generality in provenance,
+  while compiled tasks have one bounded resolution claim; verification does
+  not manufacture a tractable substitute or treat partial progress as closure;
 - answer types and verification difficulty are recorded, but neither is a
   publication gate;
 - every problem carries a high/medium/low affected-field significance level
@@ -25,7 +26,7 @@ problem generation uses `discovery campaign`.
 ## First principles
 
 An interesting question is not automatically a usable research problem. A final
-problem must satisfy four independent conditions:
+problem must satisfy five independent conditions:
 
 1. **Source fidelity** — the question follows from inspected evidence without
    quoting out of context or strengthening the original claim.
@@ -33,16 +34,23 @@ problem must satisfy four independent conditions:
    the confidence and uncertainty recorded honestly.
 3. **Scientific significance** — the repository states what knowledge,
    capability, bound, mechanism, experiment, or decision would change.
-4. **Verification clarity** — an independent reviewer can tell exactly what is
-   submitted, what is checked, and what passes without redefining or narrowing
-   the source problem.
+4. **Problem-window fitness** — a compiled task has one closed resolution
+   claim rather than an omnibus research programme.
+5. **Expert verification clarity** — a qualified domain expert can tell what
+   is submitted, what must be reviewed, and whether the claim is resolved;
+   AI or CI need not decide the science.
 
 A famous or named problem keeps the primary or standard literature
 formulation. A finite-size or parameter-restricted variant may be useful, but it
 must be labeled as a derived problem and cannot be presented as the original.
-When a literature question is genuinely general, a valid verification contract
-describes what evidence would resolve that general question rather than making
-it smaller.
+When a literature question is genuinely general, retain it in provenance and
+derive clearly labeled bounded tasks along source-supported boundaries. Do not
+make a leaf task smaller in secret, and do not make partial progress count as a
+resolution of the broader question.
+
+The Problem Schema v1.1 policy for keeping broad literature questions in
+provenance while compiling concrete, human-expert-verifiable tasks is documented
+in [Problem Window and Expert Verification Design](docs/problem-window-and-expert-verification.md).
 
 ## Source routes
 
@@ -307,14 +315,16 @@ Before formulating a problem, the pipeline must have enough context to identify:
 - how the proposed research problem follows without changing scope.
 
 Selection runs once per topic, fully offline over the topic's discovery
-report (`memory.md`): it merges equivalent formulations, splits only
-genuinely conjunctive source questions, and routes each canonical candidate
+report (`memory.md`): it merges equivalent formulations, splits independently
+publishable research directions, and routes each canonical candidate
 with an importance level and a free-form assessment that the pipeline appends
 to the candidate's `memory.md` as Research context. It never verifies primary
 sources or current status — that is the Research stage's job. It
-preserves the source problem's natural
-generality and does not add a finite size, parameter interval, geometry, method,
-observable, or answer-form restriction for verification convenience. Famous or
+preserves broad source questions in context but requires each compiled
+candidate to state one resolution claim, one quantifier spine, a closed scope,
+and its load-bearing obligations. It does not add a finite size, parameter
+interval, geometry, method, observable, or answer-form restriction merely for
+verification convenience. Famous or
 named problems are aligned to an authoritative formulation quoted from the
 source context; restricted variants are labeled as derived in the assessment.
 Every candidate belongs to the topic whose records it cites; an agent
@@ -322,13 +332,14 @@ cannot turn a subtheme into a new repository container.
 
 ## Verification contract
 
-Every final problem follows
-[Problem Schema v1.0](docs/problem-schema-v1.0.md)
+Every newly generated problem follows the backward-compatible
+[Problem Schema v1.1](docs/problem-schema-v1.0.md)
 (`schemas/problem.schema.json`). Its verification half has:
 
-- `verification_contract` keyed by answer type: each entry states what an
-  answer of that type must submit, what the reviewer checks to pass or fail
-  it, and an optional `ci_contract` for the mechanically executable part;
+- `verification_contract` keyed by answer type: each entry states whether it
+  is a full resolution or partial progress, which obligations it covers, what
+  it submits, what a qualified domain expert checks, and an optional
+  `ci_contract` for auxiliary mechanical reproduction;
 - `verification_difficulty` — a 0-10 `score` plus `rationale`, produced by the
   Research stage.
 
@@ -341,7 +352,10 @@ The score measures residual independent-review burden, not solve difficulty:
 - `7-9`: long, fragile, or novel reasoning chains;
 - `10`: the essential claim cannot be decomposed into independent checks.
 
-A score of 10 is not a rejection; it is reviewer-workload metadata.
+A score of 10 is not a rejection; it is reviewer-workload metadata. Long proof
+review, expert finite-size judgment, and experimental causal assessment are
+legitimate verification modes and do not reduce artifact quality merely
+because AI or CI cannot decide them.
 
 Only high- or medium-importance candidates proceed to the expensive
 later-literature audit — importance is the only selection gate. By default
@@ -464,23 +478,26 @@ candidates/<candidate-id>/
 `selection.json` holds the Selection Agent output for one topic (canonical
 candidates with routing fields); the per-candidate copy adds the
 pipeline-assigned identity. `research.json` holds the Research Agent's Problem
-Schema v1.0 draft after pipeline injection of the mechanical fields (problem
+Schema v1.1 draft after pipeline injection of the mechanical fields (problem
 ID, status, domain, topic, repository); for accepted candidates the reviewed
 record in `problem-review-verdict.json` supersedes it at compilation. The
 problem manifest follows
-[Problem Schema v1.0](docs/problem-schema-v1.0.md).
+[Problem Schema v1.1](docs/problem-schema-v1.0.md).
 
 The dedicated LKM route also keeps each raw paper-graph response and extraction.
 
 ## Benchmark workflow
 
-The problem-quality benchmark audits the finished artifact. It is separate
+The problem-quality benchmark is an advisory audit of the finished artifact. It is separate
 from ordinary problem generation. `discovery quality build` collects published
 problem manifests (from a campaign run, the problem pool, or bare manifest
 paths), freezes citation metadata for every identifier they cite, and
 `discovery quality evaluate` scores each case with a blind offline reviewer
 on five dimensions (citation accuracy, openness argument, scope fidelity,
-verification executability, evidence relevance). `discovery quality score`
+human-expert verification clarity under the backward-compatible
+`verification_executability` field name, and evidence relevance). It does not
+penalize null CI, high verification difficulty, or domain-expert judgment by
+itself. `discovery quality score`
 adds deterministic mechanical checks — citation cross-checks against the
 frozen metadata, README contract validation, and cross-case duplicate
 detection — and reports per-dimension accuracy against expert gold labels,

@@ -176,7 +176,9 @@ cited evidence is a contract failure, and a settled problem must not be
 rejected merely for being settled. Compilation uses the reviewed
 record; the copy stays in `review-workdir/` for human inspection.
 
-Publication requires exactly:
+Publication requires an accepted, schema-valid Problem Schema 1.1 record with
+one resolution claim and complete obligation coverage. The final reviewer
+verdict remains:
 
 ```text
 reviewer verdict == accept
@@ -201,7 +203,7 @@ questions into a shared specification. Every README has exactly eight ordered
 top-level sections: Background, Problem Statement, Current Progress,
 Scientific Significance, Answer Types, Verification Standard, Suggested CI,
 and References,
-projected deterministically from the Problem Schema v1.0 manifest. Internal
+projected deterministically from the Problem Schema manifest. Internal
 YAML records remain in campaign and pool storage.
 
 Compilation is deterministic and refuses to overwrite an untracked or manually

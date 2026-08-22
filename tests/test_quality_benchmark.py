@@ -12,6 +12,7 @@ from open_research_discovery.agent import AgentRun, strict_output_schema_errors
 from open_research_discovery.common import dump_json, dump_yaml
 from open_research_discovery.quality import (
     EvidenceFetcher,
+    QUALITY_RUBRIC,
     QualityError,
     _entry,
     build_quality_dataset,
@@ -65,6 +66,14 @@ CI text.
 
 1. The source paper.
 """
+
+
+def test_quality_rubric_treats_human_expert_review_as_valid() -> None:
+    rubric = " ".join(QUALITY_RUBRIC.split())
+    assert "Do not require AI or CI to decide the science" in rubric
+    assert "Null CI" in rubric
+    assert "High verification difficulty" in rubric
+    assert "do not deduct points solely because those newer metadata" in rubric
 
 
 def _problem(
