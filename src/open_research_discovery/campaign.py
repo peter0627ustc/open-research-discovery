@@ -745,6 +745,9 @@ class CampaignPipeline:
                         "networked_sandbox", "workspace-write"
                     ),
                     network_access=agent_config.get("network_access", True),
+                    structured_output_mode=agent_config.get(
+                        "codex_structured_output_mode", "api"
+                    ),
                     timeout_seconds=agent_config["timeout_seconds"],
                 )
             else:
@@ -1021,12 +1024,14 @@ class CampaignPipeline:
             if networked:
                 self._networked_semaphore.acquire()
             try:
-                # Prompt-schema runners (Kimi, Claude, Trae) accept
-                # contract_validator for one validation-feedback round;
-                # other runners (Codex, test doubles) keep the plain call
-                # signature.
+                # Prompt-schema runners accept contract_validator for one
+                # validation-feedback round. API-schema Codex and test
+                # doubles keep the plain call signature.
                 extra: dict[str, Any] = {}
-                if isinstance(
+                if isinstance(self.agent_runner, CodexRunner):
+                    if self.agent_runner.structured_output_mode == "prompt":
+                        extra["contract_validator"] = contract_validator
+                elif isinstance(
                     self.agent_runner, (KimiRunner, ClaudeRunner, TraeRunner)
                 ):
                     extra["contract_validator"] = contract_validator

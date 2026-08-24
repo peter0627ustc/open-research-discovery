@@ -44,7 +44,7 @@
       "properties": {
         "model": {"type": "string"},
         "backend": {
-          "description": "Headless agent backend. 'codex' uses codex exec with JSON-Schema structured output and OS sandbox isolation. 'kimi' and 'claude' use their prompt CLIs. 'trae' supports both internal traecli exec and open-source trae-cli run through a file-delivery contract with post-hoc schema validation. Defaults to 'codex'.",
+          "description": "Headless agent backend. 'codex' uses codex exec with API-enforced or prompt-validated JSON-Schema output and OS sandbox isolation. 'kimi' and 'claude' use their prompt CLIs. 'trae' supports both internal traecli exec and open-source trae-cli run through a file-delivery contract with post-hoc schema validation. Defaults to 'codex'.",
           "enum": ["codex", "kimi", "claude", "trae"],
           "default": "codex"
         },
@@ -72,6 +72,11 @@
           "default": ""
         },
         "codex_executable": {"type": "string", "minLength": 1},
+        "codex_structured_output_mode": {
+          "description": "Codex output contract mode. 'api' passes --output-schema to the Responses API. 'prompt' carries the schema in the prompt and validates the returned JSON locally for providers that do not support API structured output.",
+          "enum": ["api", "prompt"],
+          "default": "api"
+        },
         "sandbox": {"enum": ["read-only", "workspace-write"]},
         "networked_sandbox": {"enum": ["read-only", "workspace-write"]},
         "network_access": {"type": "boolean"},

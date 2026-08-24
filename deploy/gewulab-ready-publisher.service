@@ -1,0 +1,16 @@
+[Unit]
+Description=Publish compiled ready research problems to Gewu GitLab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/open-research-discovery
+EnvironmentFile=/etc/gewulab-ready-publisher.env
+ExecStart=/root/open-research-discovery/.venv/bin/python /root/open-research-discovery/scripts/publish_ready_to_gewulab.py --run-dir ${GEWU_RUN_DIR} --gitlab-url ${GEWU_GITLAB_URL} --namespace ${GEWU_GITLAB_NAMESPACE} --token-file ${GEWU_GITLAB_TOKEN_FILE} --visibility internal --max-items 10
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=multi-user.target

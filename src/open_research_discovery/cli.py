@@ -215,6 +215,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "agents": {
                 "model": "",
                 "codex_executable": "codex",
+                "codex_structured_output_mode": "api",
                 "claude_executable": "claude",
                 "networked_sandbox": "workspace-write",
                 "network_access": True,

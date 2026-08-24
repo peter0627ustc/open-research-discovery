@@ -343,6 +343,8 @@ class _HeadlessCliRunner:
 class CodexRunner(_HeadlessCliRunner):
     """Run one coarse-grained, schema-constrained Codex research stage."""
 
+    STRUCTURED_OUTPUT_MODES = frozenset({"api", "prompt"})
+
     def __init__(
         self,
         *,
@@ -353,6 +355,7 @@ class CodexRunner(_HeadlessCliRunner):
         networked_sandbox: str = "workspace-write",
         network_access: bool = True,
         timeout_seconds: int = 3600,
+        structured_output_mode: str = "api",
     ) -> None:
         super().__init__(
             repository_root=repository_root,
@@ -369,6 +372,11 @@ class CodexRunner(_HeadlessCliRunner):
         self.sandbox = sandbox
         self.networked_sandbox = networked_sandbox
         self.network_access = network_access
+        if structured_output_mode not in self.STRUCTURED_OUTPUT_MODES:
+            raise ValueError(
+                "Codex structured_output_mode must be api or prompt"
+            )
+        self.structured_output_mode = structured_output_mode
 
     def run(
         self,
@@ -381,17 +389,15 @@ class CodexRunner(_HeadlessCliRunner):
         contract_validator: Any | None = None,
         cwd: Path | None = None,
     ) -> AgentRun:
-        # contract_validator is accepted for interface uniformity with
-        # KimiRunner; Codex enforces the schema at the API level, so no
-        # validation-feedback round is needed here.
         # cwd pins the agent's working directory (the directory holding the
         # stage's memory.md); it defaults to the repository root.
         workdir = (cwd or self.repository_root).resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         events_path.parent.mkdir(parents=True, exist_ok=True)
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        strict_errors = strict_output_schema_errors(schema)
-        if strict_errors:
+        if self.structured_output_mode == "api" and (
+            strict_errors := strict_output_schema_errors(schema)
+        ):
             raise AgentOutputError(
                 "output schema is incompatible with Codex structured output: "
                 + "; ".join(strict_errors)
@@ -400,81 +406,131 @@ class CodexRunner(_HeadlessCliRunner):
         effective_sandbox = (
             self.networked_sandbox if networked else self.sandbox
         )
-        command = [
-            *shlex.split(self.executable),
-            "exec",
-            "--ephemeral",
-            "--ignore-user-config",
-            "--json",
-            "--color",
-            "never",
-            "--sandbox",
-            effective_sandbox,
-            "--output-schema",
-            str(schema_path.resolve()),
-            "--output-last-message",
-            str(output_path.resolve()),
-            "--cd",
-            str(workdir),
-        ]
-        if (
-            networked
-            and self.network_access
-            and effective_sandbox == "workspace-write"
-        ):
+        schema_instruction = ""
+        if self.structured_output_mode == "prompt":
+            schema_instruction = (
+                _SCHEMA_INSTRUCTION
+                + json.dumps(schema, ensure_ascii=False, indent=2)
+            )
+        feedback = ""
+        last_error: Exception | None = None
+        attempts = 2 if self.structured_output_mode == "prompt" else 1
+        for attempt in range(attempts):
+            command = [
+                *shlex.split(self.executable),
+                "exec",
+                "--ephemeral",
+                "--ignore-user-config",
+                "--json",
+                "--color",
+                "never",
+                "--sandbox",
+                effective_sandbox,
+            ]
+            if self.structured_output_mode == "api":
+                command.extend(
+                    ["--output-schema", str(schema_path.resolve())]
+                )
             command.extend(
-                ["--config", "sandbox_workspace_write.network_access=true"]
+                [
+                    "--output-last-message",
+                    str(output_path.resolve()),
+                    "--cd",
+                    str(workdir),
+                ]
             )
-        if self.model:
-            command.extend(["--model", self.model])
-        command.append("-")
-        # Cache misses and retries intentionally reuse output_path. Remove any
-        # prior artifact so the existence check below proves that this exact
-        # invocation, rather than an earlier one, produced the output.
-        output_path.unlink(missing_ok=True)
-        _stdout, _stderr, returncode = _execute_headless(
-            role=role,
-            command=command,
-            cwd=workdir,
-            env=None if networked else sanitized_environment(),
-            stdin_text=prompt,
-            timeout_seconds=self.timeout_seconds,
-            events_path=events_path,
-        )
-        stderr_path = events_path.with_suffix(".stderr.log")
-        metadata = {
-            "role": role,
-            "command": command,
-            "codex_version": self.version(),
-            "model": self.model or "configured-default",
-            "sandbox": effective_sandbox,
-            "network_access": bool(networked and self.network_access),
-            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            "schema": str(schema_path),
-            "schema_sha256": file_sha256(schema_path),
-            "events": str(events_path),
-            "stderr": str(stderr_path),
-            "exit_code": returncode,
-        }
-        if returncode != 0:
-            raise AgentExecutionError(
-                f"{role} failed with exit {returncode}; "
-                f"see {stderr_path}"
+            if (
+                networked
+                and self.network_access
+                and effective_sandbox == "workspace-write"
+            ):
+                command.extend(
+                    [
+                        "--config",
+                        "sandbox_workspace_write.network_access=true",
+                    ]
+                )
+            if self.model:
+                command.extend(["--model", self.model])
+            command.append("-")
+            # Cache misses and retries intentionally reuse output_path. Remove
+            # any prior artifact so existence proves this exact invocation
+            # produced the output.
+            output_path.unlink(missing_ok=True)
+            full_prompt = prompt + schema_instruction + feedback
+            _stdout, _stderr, returncode = _execute_headless(
+                role=role,
+                command=command,
+                cwd=workdir,
+                env=None if networked else sanitized_environment(),
+                stdin_text=full_prompt,
+                timeout_seconds=self.timeout_seconds,
+                events_path=events_path,
             )
-        if not output_path.is_file():
-            raise AgentExecutionError(
-                f"{role} did not write structured output to {output_path}"
-            )
-        try:
-            output = json.loads(output_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as error:
-            raise AgentOutputError(
-                f"{role} output is not valid JSON: {error}"
-            ) from error
-        _validate_agent_output(
-            role=role, schema=schema, output=output, output_path=output_path
-        )
-        return AgentRun(output=output, metadata=metadata)
+            stderr_path = events_path.with_suffix(".stderr.log")
+            metadata = {
+                "role": role,
+                "command": command,
+                "codex_version": self.version(),
+                "model": self.model or "configured-default",
+                "sandbox": effective_sandbox,
+                "network_access": bool(networked and self.network_access),
+                "structured_output_mode": self.structured_output_mode,
+                "prompt_sha256": hashlib.sha256(
+                    prompt.encode("utf-8")
+                ).hexdigest(),
+                "schema": str(schema_path),
+                "schema_sha256": file_sha256(schema_path),
+                "events": str(events_path),
+                "stderr": str(stderr_path),
+                "exit_code": returncode,
+                "validation_feedback_attempt": attempt,
+            }
+            if returncode != 0:
+                raise AgentExecutionError(
+                    f"{role} failed with exit {returncode}; "
+                    f"see {stderr_path}"
+                )
+            if not output_path.is_file():
+                raise AgentExecutionError(
+                    f"{role} did not write structured output to {output_path}"
+                )
+            reply = output_path.read_text(encoding="utf-8")
+            try:
+                output = (
+                    json.loads(reply)
+                    if self.structured_output_mode == "api"
+                    else _extract_json_object(reply)
+                )
+            except (json.JSONDecodeError, ValueError) as error:
+                last_error = AgentOutputError(
+                    f"{role} output is not valid JSON: {error}"
+                )
+                last_error.__cause__ = error
+            else:
+                try:
+                    _validate_agent_output(
+                        role=role,
+                        schema=schema,
+                        output=output,
+                        output_path=output_path,
+                    )
+                    if (
+                        self.structured_output_mode == "prompt"
+                        and contract_validator is not None
+                    ):
+                        contract_validator(output)
+                except RuntimeError as error:
+                    last_error = error
+                else:
+                    if self.structured_output_mode == "prompt":
+                        dump_json(output_path, output)
+                    return AgentRun(output=output, metadata=metadata)
+            if self.structured_output_mode == "api":
+                raise last_error
+            feedback = _VALIDATION_FEEDBACK.format(error=last_error)
+        assert last_error is not None
+        raise last_error
 
 
 

@@ -136,6 +136,74 @@ print(json.dumps({"type": "fake-event", "prompt_length": len(prompt)}))
     assert event["type"] == "fake-event"
 
 
+def test_codex_runner_prompt_mode_validates_locally_and_repairs_output(
+    tmp_path: Path,
+) -> None:
+    fake = tmp_path / "fake_codex.py"
+    counter = tmp_path / "calls.txt"
+    captured_prompt = tmp_path / "prompt.txt"
+    fake.write_text(
+        f"""
+import json
+import pathlib
+import sys
+
+if "--version" in sys.argv:
+    print("fake-codex 1.0")
+    raise SystemExit(0)
+assert "--output-schema" not in sys.argv
+prompt = sys.stdin.read()
+pathlib.Path({str(captured_prompt)!r}).write_text(prompt, encoding="utf-8")
+counter = pathlib.Path({str(counter)!r})
+calls = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(calls + 1), encoding="utf-8")
+output = pathlib.Path(sys.argv[sys.argv.index("--output-last-message") + 1])
+if calls == 0:
+    output.write_text(json.dumps({{"bad": True}}), encoding="utf-8")
+else:
+    output.write_text("prefix\\n" + json.dumps({{"ok": True}}), encoding="utf-8")
+print(json.dumps({{"type": "fake-event", "attempt": calls}}))
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    schema = tmp_path / "schema.json"
+    schema.write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["ok"],
+                "properties": {"ok": {"type": "boolean", "const": True}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CodexRunner(
+        repository_root=tmp_path,
+        executable=f"{sys.executable} {fake}",
+        sandbox="read-only",
+        structured_output_mode="prompt",
+    )
+    result = runner.run(
+        role="smoke",
+        prompt="return structured output",
+        schema_path=schema,
+        output_path=tmp_path / "output.json",
+        events_path=tmp_path / "events.jsonl",
+    )
+    assert result.output == {"ok": True}
+    assert counter.read_text(encoding="utf-8") == "2"
+    prompt = captured_prompt.read_text(encoding="utf-8")
+    assert "JSON Schema" in prompt
+    assert "previous reply failed validation" in prompt
+    command = result.metadata["command"]
+    assert "--output-schema" not in command
+    assert result.metadata["structured_output_mode"] == "prompt"
+    assert result.metadata["validation_feedback_attempt"] == 1
+    assert json.loads((tmp_path / "output.json").read_text()) == {"ok": True}
+
+
 def test_codex_runner_enforces_timeout_on_stuck_process_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -369,6 +369,7 @@ def test_campaign_defaults_to_codex_backend(tmp_path: Path) -> None:
         {
             "model": "",
             "codex_executable": executable,
+            "codex_structured_output_mode": "prompt",
             "sandbox": "read-only",
             "timeout_seconds": 60,
         },
@@ -381,6 +382,7 @@ def test_campaign_defaults_to_codex_backend(tmp_path: Path) -> None:
         run_id="codex-backend-default",
     )
     assert isinstance(pipeline.agent_runner, CodexRunner)
+    assert pipeline.agent_runner.structured_output_mode == "prompt"
     assert "codex" in pipeline.tool_versions
 
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically publish newly compiled ready research problems
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+Persistent=true
+RandomizedDelaySec=20s
+Unit=gewulab-ready-publisher.service
+
+[Install]
+WantedBy=timers.target
