@@ -71,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
     resume = campaign_actions.add_parser("resume")
     _add_run_locator(resume)
 
+    compile_pending = campaign_actions.add_parser(
+        "compile-pending",
+        help="compile audited pending candidates without replaying agents",
+    )
+    _add_run_locator(compile_pending)
+
     status = campaign_actions.add_parser("status")
     _add_run_locator(status)
 
@@ -350,6 +356,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     pipeline = CampaignPipeline.resume(run_dir, repository_root=repo)
     if args.resource == "campaign" and args.action == "resume":
         _print({"run_dir": str(run_dir), "summary": pipeline.run()})
+        return 0
+    if args.resource == "campaign" and args.action == "compile-pending":
+        _print({"run_dir": str(run_dir), "summary": pipeline.compile_pending()})
         return 0
     raise AssertionError("unreachable")
 

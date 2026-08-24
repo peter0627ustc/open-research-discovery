@@ -1652,6 +1652,54 @@ def test_streaming_pipeline_audits_before_all_discovery_finishes(
     assert len(audits) == 3
 
 
+def test_compile_pending_uses_cached_artifacts_without_replaying_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = start_campaign(tmp_path, "compile-pending")
+    candidate_id = "CAN-PENDING001"
+    candidate_dir = pipeline.run_dir / "candidates" / candidate_id
+    candidate = _candidate_record(candidate_id)
+    dump_json(candidate_dir / "discovery.json", candidate)
+    dump_json(candidate_dir / "research.json", assessment(candidate_id))
+    dump_json(
+        candidate_dir / "problem-review-verdict.json",
+        _accept_verdict(candidate_id),
+    )
+    pipeline.state["candidates"][candidate_id] = {
+        "status": "compile_pending",
+        "directory": str(candidate_dir.relative_to(pipeline.run_dir)),
+    }
+    pipeline.ledger.save()
+    pipeline._state_file_sha256 = file_sha256(pipeline.run_dir / "state.json")
+
+    compile_calls: list[str] = []
+
+    def fake_compile(
+        candidate: dict[str, Any],
+        research: dict[str, Any],
+        verdict: dict[str, Any],
+    ) -> dict[str, Any]:
+        assert research["title"] == CANONICAL_TITLE
+        assert verdict["verdict"] == "accept"
+        compile_calls.append(str(candidate["candidate_id"]))
+        return {"problem_id": "ORP-0042"}
+
+    monkeypatch.setattr(pipeline, "_compile", fake_compile)
+
+    summary = pipeline.compile_pending()
+
+    assert compile_calls == [candidate_id]
+    assert summary == {
+        "pending": 1,
+        "compiled": [
+            {"candidate_id": candidate_id, "problem_id": "ORP-0042"}
+        ],
+        "failed": [],
+    }
+    assert pipeline.state["candidates"][candidate_id]["status"] == "accepted"
+
+
 def test_streaming_pipeline_runs_bounded_candidates_per_topic(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

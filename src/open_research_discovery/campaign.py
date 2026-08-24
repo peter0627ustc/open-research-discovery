@@ -1059,6 +1059,115 @@ class CampaignPipeline:
         with self._exclusive_run_access():
             return self._run_locked()
 
+    def compile_pending(self) -> dict[str, Any]:
+        """Compile audited candidates without replaying any agent stage.
+
+        This recovery path is intentionally artifact-driven: it accepts only
+        candidates already marked ``compile_pending`` whose Discovery,
+        Research, and Problem Review outputs are present on disk.  Individual
+        compile failures remain pending and do not block other candidates.
+        """
+
+        with self._exclusive_run_access():
+            pending_states = sorted(
+                (
+                    (candidate_id, candidate_state)
+                    for candidate_id, candidate_state in self.state.get(
+                        "candidates", {}
+                    ).items()
+                    if candidate_state.get("status") == "compile_pending"
+                ),
+                key=lambda item: item[0],
+            )
+            records: list[
+                tuple[
+                    dict[str, Any],
+                    dict[str, Any],
+                    dict[str, Any],
+                ]
+            ] = []
+            failures: list[dict[str, str]] = []
+            for candidate_id, candidate_state in pending_states:
+                try:
+                    relative_dir = str(candidate_state["directory"])
+                    candidate_dir = self.run_dir / relative_dir
+                    candidate = _load_json(candidate_dir / "discovery.json")
+                    assessment = _load_json(candidate_dir / "research.json")
+                    verdict = _load_json(
+                        candidate_dir / "problem-review-verdict.json"
+                    )
+                    if str(candidate.get("candidate_id")) != candidate_id:
+                        raise CampaignError(
+                            "discovery artifact candidate_id does not match state"
+                        )
+                    if str(verdict.get("candidate_id")) != candidate_id:
+                        raise CampaignError(
+                            "review artifact candidate_id does not match state"
+                        )
+                    if verdict.get("verdict") != "accept":
+                        raise CampaignError(
+                            "compile_pending candidate lacks an accept verdict"
+                        )
+                    records.append((candidate, assessment, verdict))
+                except Exception as error:
+                    rendered = f"{type(error).__name__}: {error}"
+                    failures.append(
+                        {"candidate_id": candidate_id, "error": rendered}
+                    )
+                    self.ledger.update_candidate(
+                        candidate_id, {"compile_error": rendered}
+                    )
+
+            compiled: list[dict[str, str]] = []
+            if records:
+                with ThreadPoolExecutor(
+                    max_workers=min(self.workers, len(records)),
+                    thread_name_prefix="pending-compile",
+                ) as executor:
+                    future_to_record = {
+                        executor.submit(self._compile, *record): record
+                        for record in records
+                    }
+                    for future in as_completed(future_to_record):
+                        candidate, _, _ = future_to_record[future]
+                        candidate_id = str(candidate["candidate_id"])
+                        try:
+                            result = future.result()
+                        except Exception as error:
+                            rendered = f"{type(error).__name__}: {error}"
+                            failures.append(
+                                {
+                                    "candidate_id": candidate_id,
+                                    "error": rendered,
+                                }
+                            )
+                            self.ledger.update_candidate(
+                                candidate_id, {"compile_error": rendered}
+                            )
+                            continue
+                        self.ledger.update_candidate(
+                            candidate_id,
+                            {"status": "accepted", "compile_error": ""},
+                        )
+                        compiled.append(
+                            {
+                                "candidate_id": candidate_id,
+                                "problem_id": str(result["problem_id"]),
+                            }
+                        )
+
+            self.state["updated_at"] = utc_now()
+            self.ledger.save()
+            return {
+                "pending": len(pending_states),
+                "compiled": sorted(
+                    compiled, key=lambda item: item["candidate_id"]
+                ),
+                "failed": sorted(
+                    failures, key=lambda item: item["candidate_id"]
+                ),
+            }
+
     def _run_locked(self) -> dict[str, Any]:
         self.state["status"] = "running"
         self.state["error"] = ""
