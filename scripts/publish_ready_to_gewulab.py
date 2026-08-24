@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextlib
 import dataclasses
 import fcntl
@@ -942,79 +943,103 @@ def publish(args: argparse.Namespace) -> int:
         namespace_value = gitlab.namespace(namespace)
         namespace_id = int(namespace_value["id"])
 
+        if args.workers < 1:
+            raise PublishError("--workers must be at least 1")
+
+        def publish_one(problem: ReadyProblem) -> dict[str, Any]:
+            commit = prepare_repository(problem, owner_user_id)
+            project = gitlab.ensure_project(
+                namespace_id=namespace_id,
+                namespace=namespace,
+                problem=problem,
+                visibility=args.visibility,
+            )
+            full_path = str(project["path_with_namespace"])
+            readme = (problem.repo_dir / "README.md").read_text(encoding="utf-8")
+            render_result = validate_math_in_chunks(
+                gitlab,
+                readme,
+                full_path,
+                args.math_validation_chunk_size,
+            )
+            pushed_commit = push_repository(
+                problem, str(project["http_url_to_repo"]), token
+            )
+            remote_readme = gitlab.raw_readme(int(project["id"]))
+            if _sha256_text(remote_readme) != _sha256_text(readme):
+                raise PublishError(
+                    "published README content does not match the local README"
+                )
+            return {
+                "candidate_id": problem.candidate_id,
+                "publication_id": problem.publication_id,
+                "topic_id": problem.topic_id,
+                "project_id": int(project["id"]),
+                "project_path": full_path,
+                "project_url": str(project["web_url"]),
+                "commit": pushed_commit,
+                "readme_sha256": _sha256_text(readme),
+                "render_validation": render_result,
+                "published_at": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                ),
+            }
+
         failures = 0
-        for problem in pending:
-            try:
-                commit = prepare_repository(problem, owner_user_id)
-                project = gitlab.ensure_project(
-                    namespace_id=namespace_id,
-                    namespace=namespace,
-                    problem=problem,
-                    visibility=args.visibility,
-                )
-                full_path = str(project["path_with_namespace"])
-                readme = (problem.repo_dir / "README.md").read_text(encoding="utf-8")
-                render_result = validate_math_in_chunks(
-                    gitlab,
-                    readme,
-                    full_path,
-                    args.math_validation_chunk_size,
-                )
-                pushed_commit = push_repository(problem, str(project["http_url_to_repo"]), token)
-                remote_readme = gitlab.raw_readme(int(project["id"]))
-                if _sha256_text(remote_readme) != _sha256_text(readme):
-                    raise PublishError("published README content does not match the local README")
-                published[problem.problem_id] = {
-                    "candidate_id": problem.candidate_id,
-                    "publication_id": problem.publication_id,
-                    "topic_id": problem.topic_id,
-                    "project_id": int(project["id"]),
-                    "project_path": full_path,
-                    "project_url": str(project["web_url"]),
-                    "commit": pushed_commit,
-                    "readme_sha256": _sha256_text(readme),
-                    "render_validation": render_result,
-                    "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                }
-                blocked.pop(problem.problem_id, None)
-                _save_ledger(ledger_path, ledger)
-                _print_event(
-                    "published",
-                    problem_id=problem.problem_id,
-                    publication_id=problem.publication_id,
-                    project_path=full_path,
-                    project_url=str(project["web_url"]),
-                    commit=pushed_commit,
-                )
-            except MathValidationError as error:
-                failures += 1
-                source = (problem.repo_dir / "README.md").read_text(encoding="utf-8")
-                validation_block = {
-                    "candidate_id": problem.candidate_id,
-                    "publication_id": problem.publication_id,
-                    "topic_id": problem.topic_id,
-                    "reason": "gitlab_markdown_validation_failed",
-                    "readme_sha256": _sha256_text(source),
-                    "error": str(error),
-                    **error.details,
-                    "blocked_at": time.strftime(
-                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                    ),
-                }
-                blocked[problem.problem_id] = validation_block
-                _save_ledger(ledger_path, ledger)
-                _print_event(
-                    "math_validation_failed",
-                    problem_id=problem.problem_id,
-                    **validation_block,
-                )
-            except Exception as error:  # isolate one Problem from the remaining batch
-                failures += 1
-                _print_event(
-                    "failed",
-                    problem_id=problem.problem_id,
-                    error=f"{type(error).__name__}: {error}",
-                )
+        with ThreadPoolExecutor(
+            max_workers=min(args.workers, len(pending)),
+            thread_name_prefix="gewulab-publish",
+        ) as executor:
+            future_to_problem = {
+                executor.submit(publish_one, problem): problem
+                for problem in pending
+            }
+            for future in as_completed(future_to_problem):
+                problem = future_to_problem[future]
+                try:
+                    publication = future.result()
+                    published[problem.problem_id] = publication
+                    blocked.pop(problem.problem_id, None)
+                    _save_ledger(ledger_path, ledger)
+                    _print_event(
+                        "published",
+                        problem_id=problem.problem_id,
+                        publication_id=problem.publication_id,
+                        project_path=publication["project_path"],
+                        project_url=publication["project_url"],
+                        commit=publication["commit"],
+                    )
+                except MathValidationError as error:
+                    failures += 1
+                    source = (problem.repo_dir / "README.md").read_text(
+                        encoding="utf-8"
+                    )
+                    validation_block = {
+                        "candidate_id": problem.candidate_id,
+                        "publication_id": problem.publication_id,
+                        "topic_id": problem.topic_id,
+                        "reason": "gitlab_markdown_validation_failed",
+                        "readme_sha256": _sha256_text(source),
+                        "error": str(error),
+                        **error.details,
+                        "blocked_at": time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                        ),
+                    }
+                    blocked[problem.problem_id] = validation_block
+                    _save_ledger(ledger_path, ledger)
+                    _print_event(
+                        "math_validation_failed",
+                        problem_id=problem.problem_id,
+                        **validation_block,
+                    )
+                except Exception as error:  # isolate one Problem from the batch
+                    failures += 1
+                    _print_event(
+                        "failed",
+                        problem_id=problem.problem_id,
+                        error=f"{type(error).__name__}: {error}",
+                    )
         return 1 if failures else 0
 
 
@@ -1032,6 +1057,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--problem-id")
     parser.add_argument("--max-items", type=int)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="number of Problems to publish concurrently (default: 1)",
+    )
     parser.add_argument(
         "--math-validation-chunk-size",
         type=int,
