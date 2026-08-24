@@ -554,9 +554,16 @@ class Produced:
 
 
 class StageLedger:
-    def __init__(self, run_dir: Path, state: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        run_dir: Path,
+        state: dict[str, Any],
+        *,
+        reuse_completed: bool = False,
+    ) -> None:
         self.run_dir = run_dir
         self.state = state
+        self.reuse_completed = reuse_completed
         self._lock = threading.RLock()
 
     def save(self) -> None:
@@ -599,7 +606,10 @@ class StageLedger:
             previous = stages.get(key) or {}
             if (
                 previous.get("status") == "completed"
-                and previous.get("input_sha256") == input_sha
+                and (
+                    previous.get("input_sha256") == input_sha
+                    or self.reuse_completed
+                )
                 and output_path.is_file()
                 and previous.get("output_sha256") == file_sha256(output_path)
             ):
@@ -682,6 +692,7 @@ class CampaignPipeline:
         agent_runner: Any | None = None,
         paper_collector: PaperCollector | None = None,
         citation_fetcher: Any | None = None,
+        reuse_completed_stages: bool = False,
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.run_dir = run_dir.resolve()
@@ -784,7 +795,11 @@ class CampaignPipeline:
             )
             self.citation_fetcher = self._default_citation_fetcher.fetch
         self.state = _load_json(self.run_dir / "state.json")
-        self.ledger = StageLedger(self.run_dir, self.state)
+        self.ledger = StageLedger(
+            self.run_dir,
+            self.state,
+            reuse_completed=reuse_completed_stages,
+        )
         self._state_file_sha256 = file_sha256(self.run_dir / "state.json")
         self.problem_root = Path(config["outputs"]["problem_root"]).resolve()
         pool_root = str(config["outputs"]["pool_root"] or "")
@@ -889,6 +904,7 @@ class CampaignPipeline:
         agent_runner: Any | None = None,
         paper_collector: PaperCollector | None = None,
         citation_fetcher: Any | None = None,
+        reuse_completed_stages: bool = False,
     ) -> "CampaignPipeline":
         run_dir = run_dir.resolve()
         with _campaign_run_lock(run_dir):
@@ -912,6 +928,7 @@ class CampaignPipeline:
                 agent_runner=agent_runner,
                 paper_collector=paper_collector,
                 citation_fetcher=citation_fetcher,
+                reuse_completed_stages=reuse_completed_stages,
             )
             interrupted = False
             for record in pipeline.state.get("stages", {}).values():

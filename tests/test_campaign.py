@@ -1700,6 +1700,33 @@ def test_compile_pending_uses_cached_artifacts_without_replaying_agents(
     assert pipeline.state["candidates"][candidate_id]["status"] == "accepted"
 
 
+def test_stage_ledger_can_reuse_valid_completed_output_after_input_change(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "cached.json"
+    dump_json(output_path, {"value": "cached"})
+    state = {
+        "stages": {
+            "stage": {
+                "status": "completed",
+                "input_sha256": "old-input",
+                "output_sha256": file_sha256(output_path),
+            }
+        }
+    }
+    ledger = StageLedger(tmp_path, state, reuse_completed=True)
+
+    def must_not_run() -> campaign_mod.Produced:
+        raise AssertionError("completed producer was replayed")
+
+    assert ledger.execute(
+        key="stage",
+        inputs={"new": "input"},
+        output_path=output_path,
+        producer=must_not_run,
+    ) == {"value": "cached"}
+
+
 def test_streaming_pipeline_runs_bounded_candidates_per_topic(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

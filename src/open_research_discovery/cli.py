@@ -70,6 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume = campaign_actions.add_parser("resume")
     _add_run_locator(resume)
+    resume.add_argument(
+        "--reuse-completed-stages",
+        action="store_true",
+        help=(
+            "reuse schema-valid completed artifacts even when current tool or "
+            "prompt fingerprints differ"
+        ),
+    )
 
     compile_pending = campaign_actions.add_parser(
         "compile-pending",
@@ -353,7 +361,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
         _print(state)
         return 0
-    pipeline = CampaignPipeline.resume(run_dir, repository_root=repo)
+    pipeline = CampaignPipeline.resume(
+        run_dir,
+        repository_root=repo,
+        reuse_completed_stages=bool(
+            getattr(args, "reuse_completed_stages", False)
+        ),
+    )
     if args.resource == "campaign" and args.action == "resume":
         _print({"run_dir": str(run_dir), "summary": pipeline.run()})
         return 0
