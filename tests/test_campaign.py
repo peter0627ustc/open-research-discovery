@@ -1565,15 +1565,15 @@ def test_streaming_pipeline_audits_before_all_discovery_finishes(
         with discovery_lock:
             discovered.append(topic_id)
             topic_worker_threads[topic_id] = threading.get_ident()
-        return topic_id, [
-            {
-                "domain_id": topic_id,
-                "topic_id": topic_id,
-                "source_key": f"lead:{topic_id}:1",
-                "source_kind": "web",
-                "content": f"Open question for {topic_id}",
-            }
-        ]
+        record = {
+            "domain_id": topic_id,
+            "topic_id": topic_id,
+            "source_key": f"lkm:{topic_id}:1",
+            "source_kind": "lkm_open_question",
+            "content": f"Open question for {topic_id}",
+        }
+        # Topic-local duplicates are collapsed before materialization.
+        return topic_id, [record, dict(record)]
 
     def fake_materialize(
         records: list[dict[str, Any]],
@@ -1581,6 +1581,7 @@ def test_streaming_pipeline_audits_before_all_discovery_finishes(
         cumulative: bool = False,
     ) -> list[dict[str, Any]]:
         assert cumulative
+        assert len(records) == 1
         topic_id = str(records[0]["topic_id"])
         candidate_id = f"CAN-{topic_id.upper():0<12}"[:16]
         candidate = {

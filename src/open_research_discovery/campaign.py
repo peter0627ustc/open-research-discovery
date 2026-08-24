@@ -1236,10 +1236,10 @@ class CampaignPipeline:
         """Run each topic through Discovery, Research, and Review in one worker.
 
         The shared executor bounds the number of active topic pipelines. A
-        worker does not take another topic until it has audited every candidate
-        from its current topic and compiled the accepted topic-search candidates.
-        LKM open-question candidates remain behind the global discovery barrier
-        because cross-topic deduplication must settle ownership first.
+        worker does not take another topic until it has deduplicated that
+        topic's source records, audited every candidate, and compiled every
+        accepted candidate.  Candidate identity stays topic-qualified, so no
+        cross-topic discovery barrier is needed for either source mode.
         """
 
         topics = self._configured_topics()
@@ -1254,6 +1254,7 @@ class CampaignPipeline:
             dict[str, tuple[dict[str, Any], dict[str, Any]]],
         ]:
             domain_id, records = self._discover_domain(topic, limit)
+            records = self._deduplicate_source_records(records)
             with self._candidate_materialization_lock:
                 candidates = self._materialize_discovery_candidates(
                     records,
@@ -1282,11 +1283,6 @@ class CampaignPipeline:
                     candidate_id,
                     {"status": "compile_pending"},
                 )
-                if any(
-                    str(source_key).startswith("lkm:")
-                    for source_key in candidate.get("source_keys") or []
-                ):
-                    continue
                 self._compile(candidate, assessment, verdict)
                 self.ledger.update_candidate(
                     candidate_id,
@@ -1331,7 +1327,6 @@ class CampaignPipeline:
             candidates,
             key=lambda candidate: str(candidate["candidate_id"]),
         )
-        candidates = self._deduplicate_cross_topic_lkm(candidates)
         active_candidate_ids = {
             str(candidate["candidate_id"]) for candidate in candidates
         }
@@ -1992,11 +1987,10 @@ Return empty lists for disabled source modes.
             )
         candidate_ids = _candidate_ids(entries)
         if cumulative:
-            # LKM question identities intentionally omit their topic so batch
-            # discovery can collapse cross-topic duplicates. Streaming sees
-            # topics in completion order, so qualify those transient IDs by
-            # topic; the configured-order dedup pass still chooses the winner
-            # before any candidate is compiled.
+            # LKM's global question identity can occur under several configured
+            # topics.  Streaming campaigns intentionally keep those topic
+            # windows independent, so qualify LKM candidate IDs by topic while
+            # retaining source-key deduplication inside each topic.
             candidate_ids = [
                 (
                     "CAN-"
