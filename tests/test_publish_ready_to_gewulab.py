@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
 import yaml
 
 
@@ -152,24 +153,74 @@ def test_rendered_math_must_match_source_nodes() -> None:
     assert publisher.validate_rendered_math(source, html)["rendered_math_nodes"] == 2
 
 
-def test_math_render_block_records_limit_without_changing_source(tmp_path: Path) -> None:
-    run = make_candidate(tmp_path)
-    problem = publisher.discover_ready(run)[0]
-    source = "$x$\n" * 51
-    block = publisher._math_render_block(problem, source, 50)
-    assert block is not None
-    assert block["reason"] == "gitlab_markdown_math_node_limit"
-    assert block["expected_math_nodes"] == 51
-    assert block["max_rendered_math_nodes"] == 50
+def test_math_validation_chunks_are_lossless_and_bounded() -> None:
+    source = "".join(f"Paragraph {index}: $x_{{{index}}}$.\n\n" for index in range(85))
+    chunks = publisher.split_math_validation_chunks(source, 40)
+    assert "".join(chunks) == source
+    assert [publisher._math_expectations(chunk)[0] for chunk in chunks] == [40, 40, 5]
 
 
-def test_math_render_block_is_retried_after_source_or_limit_change(tmp_path: Path) -> None:
-    run = make_candidate(tmp_path)
-    problem = publisher.discover_ready(run)[0]
-    previous = publisher._math_render_block(problem, "$x$\n" * 51, 50)
-    assert previous is not None
-    assert publisher._same_math_render_block(previous, dict(previous))
-    changed_source = publisher._math_render_block(problem, "$y$\n" * 51, 50)
-    changed_limit = publisher._math_render_block(problem, "$x$\n" * 51, 49)
-    assert not publisher._same_math_render_block(previous, changed_source)
-    assert not publisher._same_math_render_block(previous, changed_limit)
+def test_math_validation_chunks_do_not_split_fenced_blocks() -> None:
+    source = "Before $x$.\n\n```math\na + b = c\n\nd + e = f\n```\n\nAfter $y$.\n"
+    chunks = publisher.split_math_validation_chunks(source, 2)
+    assert "".join(chunks) == source
+    assert "```math\na + b = c\n\nd + e = f\n```" in chunks[0]
+    assert all(publisher._math_expectations(chunk)[0] <= 2 for chunk in chunks)
+
+
+def test_math_validation_splits_one_oversized_paragraph_between_formulas() -> None:
+    source = " ".join(f"$x_{{{index}}}$" for index in range(41)) + "\n"
+    chunks = publisher.split_math_validation_chunks(source, 40)
+    assert "".join(chunks) == source
+    assert [publisher._math_expectations(chunk)[0] for chunk in chunks] == [40, 1]
+
+
+class FakeGitLab:
+    def __init__(self, invalid_formula: str | None = None) -> None:
+        self.invalid_formula = invalid_formula
+        self.calls: list[str] = []
+
+    def render_markdown(self, source: str, project_path: str) -> str:
+        self.calls.append(source)
+        total, display = publisher._math_expectations(source)
+        if self.invalid_formula and self.invalid_formula in source:
+            total -= 1
+        inline = total - display
+        return (
+            '<span class="js-render-math"></span>' * inline
+            + '<div class="js-render-math" data-math-style="display"></div>' * display
+        )
+
+
+def test_math_validation_renders_every_bounded_chunk() -> None:
+    source = "".join(f"Paragraph {index}: $x_{{{index}}}$.\n\n" for index in range(85))
+    gitlab = FakeGitLab()
+    result = publisher.validate_math_in_chunks(gitlab, source, "group/project", 40)
+    assert result["rendered_math_nodes"] == 85
+    assert result["validation_chunks"] == 3
+    assert result["validation_requests"] == 3
+    assert [publisher._math_expectations(chunk)[0] for chunk in gitlab.calls] == [40, 40, 5]
+
+
+def test_math_validation_recursively_isolates_a_bad_formula() -> None:
+    source = "Good $x$.\n\nBad $bad$.\n\nGood $y$.\n"
+    gitlab = FakeGitLab(invalid_formula="$bad$")
+    with pytest.raises(publisher.MathValidationError, match="isolated") as captured:
+        publisher.validate_math_in_chunks(gitlab, source, "group/project", 40)
+    assert captured.value.details["expected_math_nodes"] == 1
+    assert len(gitlab.calls) > 1
+
+
+def test_only_unchanged_genuine_validation_failures_are_skipped() -> None:
+    source = "$x$\n"
+    current = {
+        "reason": "gitlab_markdown_validation_failed",
+        "readme_sha256": publisher._sha256_text(source),
+    }
+    old_limit_block = {
+        "reason": "gitlab_markdown_math_node_limit",
+        "readme_sha256": publisher._sha256_text(source),
+    }
+    assert publisher._same_math_validation_block(current, source)
+    assert not publisher._same_math_validation_block(current, "$y$\n")
+    assert not publisher._same_math_validation_block(old_limit_block, source)

@@ -58,7 +58,7 @@ STATUS_RE = re.compile(
     r"^## Current Progress\s*$.*?^- Status:\s*`([^`]+)`\s*$",
     flags=re.MULTILINE | re.DOTALL,
 )
-DEFAULT_MAX_RENDERED_MATH_NODES = 50
+DEFAULT_MATH_VALIDATION_CHUNK_SIZE = 40
 DISCIPLINE_CODES = {
     "math": "MATH",
     "phys": "PHYS",
@@ -79,6 +79,14 @@ DISCIPLINE_CODES = {
 
 class PublishError(RuntimeError):
     """A safe, user-actionable publication failure."""
+
+
+class MathValidationError(PublishError):
+    """The README contains mathematics that GitLab did not render faithfully."""
+
+    def __init__(self, message: str, details: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.details = details
 
 
 @dataclasses.dataclass(frozen=True)
@@ -563,46 +571,119 @@ class GitLab:
             ) from error
 
 
+def _math_spans(text: str) -> list[tuple[int, int, bool]]:
+    """Locate non-overlapping fenced, display, and inline math expressions."""
+
+    spans: list[tuple[int, int, bool]] = []
+    patterns = (
+        (re.compile(r"^```math\s*$.*?^```\s*$", flags=re.MULTILINE | re.DOTALL), True),
+        (re.compile(r"\$\$.*?\$\$", flags=re.DOTALL), True),
+        (re.compile(r"(?<!\$)\$(?!\$)(?:\\.|[^$\n])+?(?<!\$)\$(?!\$)"), False),
+    )
+    for pattern, display in patterns:
+        for match in pattern.finditer(text):
+            if any(match.start() < end and match.end() > start for start, end, _ in spans):
+                continue
+            spans.append((match.start(), match.end(), display))
+    return sorted(spans)
+
+
 def _math_expectations(text: str) -> tuple[int, int]:
-    fenced = len(re.findall(r"^```math\s*$.*?^```\s*$", text, flags=re.MULTILINE | re.DOTALL))
-    without_fenced = re.sub(
-        r"^```math\s*$.*?^```\s*$", "", text, flags=re.MULTILINE | re.DOTALL
+    spans = _math_spans(text)
+    return len(spans), sum(display for _, _, display in spans)
+
+
+def _markdown_validation_units(source: str) -> list[str]:
+    """Split Markdown at paragraph and fenced-block boundaries, losslessly."""
+
+    units: list[str] = []
+    current: list[str] = []
+    fence_character = ""
+    fence_length = 0
+    for line in source.splitlines(keepends=True):
+        if fence_character:
+            current.append(line)
+            closing = re.match(
+                rf"^ {{0,3}}{re.escape(fence_character)}{{{fence_length},}}\s*$",
+                line,
+            )
+            if closing:
+                units.append("".join(current))
+                current = []
+                fence_character = ""
+                fence_length = 0
+            continue
+
+        opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if opening:
+            if current:
+                units.append("".join(current))
+            marker = opening.group(1)
+            current = [line]
+            fence_character = marker[0]
+            fence_length = len(marker)
+            continue
+
+        current.append(line)
+        if not line.strip():
+            units.append("".join(current))
+            current = []
+
+    if current:
+        units.append("".join(current))
+    if "".join(units) != source:
+        raise PublishError("internal error: Markdown validation split was not lossless")
+    return units
+
+
+def split_math_validation_chunks(
+    source: str, max_math_nodes: int = DEFAULT_MATH_VALIDATION_CHUNK_SIZE
+) -> list[str]:
+    """Return a lossless sequence of renderable chunks below GitLab's API cap."""
+
+    if max_math_nodes < 1:
+        raise PublishError("math validation chunk size must be at least 1")
+    expanded_units: list[str] = []
+    for unit in _markdown_validation_units(source):
+        spans = _math_spans(unit)
+        if len(spans) <= max_math_nodes:
+            expanded_units.append(unit)
+            continue
+        start = 0
+        for next_index in range(max_math_nodes, len(spans), max_math_nodes):
+            cut = spans[next_index][0]
+            expanded_units.append(unit[start:cut])
+            start = cut
+        expanded_units.append(unit[start:])
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_math_nodes = 0
+    for unit in expanded_units:
+        unit_math_nodes, _ = _math_expectations(unit)
+        if unit_math_nodes > max_math_nodes:
+            raise PublishError("internal error: a validation chunk split a formula incorrectly")
+        if current and current_math_nodes + unit_math_nodes > max_math_nodes:
+            chunks.append("".join(current))
+            current = []
+            current_math_nodes = 0
+        current.append(unit)
+        current_math_nodes += unit_math_nodes
+    if current or not chunks:
+        chunks.append("".join(current))
+    if "".join(chunks) != source:
+        raise PublishError("internal error: Markdown validation chunks changed the source")
+    return chunks
+
+
+def _same_math_validation_block(previous: Any, source: str) -> bool:
+    """Skip only unchanged, genuine syntax failures; old 50-node blocks retry."""
+
+    return (
+        isinstance(previous, dict)
+        and previous.get("reason") == "gitlab_markdown_validation_failed"
+        and previous.get("readme_sha256") == _sha256_text(source)
     )
-    display = len(re.findall(r"\$\$.*?\$\$", without_fenced, flags=re.DOTALL))
-    without_display = re.sub(r"\$\$.*?\$\$", "", without_fenced, flags=re.DOTALL)
-    inline = len(re.findall(r"(?<!\$)\$(?!\$)(?:\\.|[^$\n])+?(?<!\$)\$(?!\$)", without_display))
-    return fenced + display + inline, fenced + display
-
-
-def _math_render_block(
-    problem: ReadyProblem, source: str, max_rendered_math_nodes: int
-) -> dict[str, Any] | None:
-    expected_total, expected_display = _math_expectations(source)
-    if expected_total <= max_rendered_math_nodes:
-        return None
-    return {
-        "candidate_id": problem.candidate_id,
-        "publication_id": problem.publication_id,
-        "topic_id": problem.topic_id,
-        "reason": "gitlab_markdown_math_node_limit",
-        "readme_sha256": _sha256_text(source),
-        "expected_math_nodes": expected_total,
-        "expected_display_nodes": expected_display,
-        "max_rendered_math_nodes": max_rendered_math_nodes,
-    }
-
-
-def _same_math_render_block(previous: Any, current: dict[str, Any] | None) -> bool:
-    if not isinstance(previous, dict) or current is None:
-        return False
-    keys = (
-        "reason",
-        "readme_sha256",
-        "expected_math_nodes",
-        "expected_display_nodes",
-        "max_rendered_math_nodes",
-    )
-    return all(previous.get(key) == current.get(key) for key in keys)
 
 
 def validate_rendered_math(source: str, html: str) -> dict[str, int]:
@@ -621,6 +702,108 @@ def validate_rendered_math(source: str, html: str) -> dict[str, int]:
         "expected_display_nodes": expected_display,
         "rendered_display_nodes": rendered_display,
     }
+
+
+def _sum_render_results(results: Iterable[dict[str, int]]) -> dict[str, int]:
+    totals = {
+        "expected_math_nodes": 0,
+        "rendered_math_nodes": 0,
+        "expected_display_nodes": 0,
+        "rendered_display_nodes": 0,
+    }
+    for result in results:
+        for key in totals:
+            totals[key] += int(result[key])
+    return totals
+
+
+def _render_and_validate_math_chunk(
+    gitlab: Any,
+    source: str,
+    project_path: str,
+    *,
+    label: str,
+    max_math_nodes: int,
+    request_counter: list[int],
+) -> dict[str, int]:
+    request_counter[0] += 1
+    rendered = gitlab.render_markdown(source, project_path)
+    try:
+        return validate_rendered_math(source, rendered)
+    except PublishError as error:
+        expected_total, expected_display = _math_expectations(source)
+        details: dict[str, Any] = {
+            "validation_chunk": label,
+            "expected_math_nodes": expected_total,
+            "expected_display_nodes": expected_display,
+        }
+        if expected_total <= 1:
+            raise MathValidationError(
+                f"{error} (isolated in {label})",
+                details,
+            ) from error
+
+        smaller_limit = max(1, min(max_math_nodes - 1, expected_total // 2))
+        try:
+            subchunks = split_math_validation_chunks(source, smaller_limit)
+        except PublishError as split_error:
+            raise MathValidationError(
+                f"{error} ({label}; unable to isolate at a paragraph or fenced-block boundary: "
+                f"{split_error})",
+                details,
+            ) from error
+        if len(subchunks) <= 1:
+            raise MathValidationError(
+                f"{error} ({label}; unable to isolate below this Markdown block)",
+                details,
+            ) from error
+
+        results = []
+        for index, subchunk in enumerate(subchunks, start=1):
+            results.append(
+                _render_and_validate_math_chunk(
+                    gitlab,
+                    subchunk,
+                    project_path,
+                    label=f"{label}.{index}/{len(subchunks)}",
+                    max_math_nodes=smaller_limit,
+                    request_counter=request_counter,
+                )
+            )
+        return _sum_render_results(results)
+
+
+def validate_math_in_chunks(
+    gitlab: Any,
+    source: str,
+    project_path: str,
+    max_math_nodes: int = DEFAULT_MATH_VALIDATION_CHUNK_SIZE,
+) -> dict[str, int]:
+    """Validate an exact README copy through bounded, lossless render requests."""
+
+    chunks = split_math_validation_chunks(source, max_math_nodes)
+    request_counter = [0]
+    results = []
+    for index, chunk in enumerate(chunks, start=1):
+        results.append(
+            _render_and_validate_math_chunk(
+                gitlab,
+                chunk,
+                project_path,
+                label=f"{index}/{len(chunks)}",
+                max_math_nodes=max_math_nodes,
+                request_counter=request_counter,
+            )
+        )
+    totals = _sum_render_results(results)
+    totals.update(
+        {
+            "validation_chunks": len(chunks),
+            "validation_requests": request_counter[0],
+            "max_math_nodes_per_chunk": max_math_nodes,
+        }
+    )
+    return totals
 
 
 @contextlib.contextmanager
@@ -703,19 +886,14 @@ def publish(args: argparse.Namespace) -> int:
         published = ledger["published"]
         blocked = ledger["blocked"]
         pending: list[ReadyProblem] = []
-        math_blocks: dict[str, dict[str, Any] | None] = {}
         unchanged_blocked = 0
         for item in ready:
             if item.problem_id in published:
                 continue
             source = (item.repo_dir / "README.md").read_text(encoding="utf-8")
-            current_block = _math_render_block(
-                item, source, args.max_rendered_math_nodes
-            )
-            math_blocks[item.problem_id] = current_block
             if (
                 not args.retry_blocked
-                and _same_math_render_block(blocked.get(item.problem_id), current_block)
+                and _same_math_validation_block(blocked.get(item.problem_id), source)
             ):
                 unchanged_blocked += 1
                 continue
@@ -729,27 +907,27 @@ def publish(args: argparse.Namespace) -> int:
             "scan",
             ready=len(ready),
             already_published=sum(item.problem_id in published for item in ready),
-            unchanged_render_blocked=unchanged_blocked,
+            unchanged_validation_blocked=unchanged_blocked,
             selected=len(pending),
         )
         if args.dry_run:
             for item in pending:
-                current_block = math_blocks[item.problem_id]
-                if current_block is not None:
-                    _print_event(
-                        "would_render_block",
-                        problem_id=item.problem_id,
-                        **current_block,
-                    )
-                else:
-                    _print_event(
-                        "would_publish",
-                        problem_id=item.problem_id,
-                        publication_id=item.publication_id,
-                        candidate_id=item.candidate_id,
-                        topic_id=item.topic_id,
-                        project_path=item.project_path,
-                    )
+                source = (item.repo_dir / "README.md").read_text(encoding="utf-8")
+                chunks = split_math_validation_chunks(
+                    source, args.math_validation_chunk_size
+                )
+                expected_math_nodes, expected_display_nodes = _math_expectations(source)
+                _print_event(
+                    "would_publish",
+                    problem_id=item.problem_id,
+                    publication_id=item.publication_id,
+                    candidate_id=item.candidate_id,
+                    topic_id=item.topic_id,
+                    project_path=item.project_path,
+                    expected_math_nodes=expected_math_nodes,
+                    expected_display_nodes=expected_display_nodes,
+                    validation_chunks=len(chunks),
+                )
             return 0
         if not pending:
             return 0
@@ -767,22 +945,6 @@ def publish(args: argparse.Namespace) -> int:
         failures = 0
         for problem in pending:
             try:
-                current_block = math_blocks[problem.problem_id]
-                if current_block is not None:
-                    blocked[problem.problem_id] = {
-                        **current_block,
-                        "blocked_at": time.strftime(
-                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                        ),
-                    }
-                    _save_ledger(ledger_path, ledger)
-                    _print_event(
-                        "render_blocked",
-                        problem_id=problem.problem_id,
-                        **current_block,
-                    )
-                    continue
-                blocked.pop(problem.problem_id, None)
                 commit = prepare_repository(problem, owner_user_id)
                 project = gitlab.ensure_project(
                     namespace_id=namespace_id,
@@ -792,8 +954,12 @@ def publish(args: argparse.Namespace) -> int:
                 )
                 full_path = str(project["path_with_namespace"])
                 readme = (problem.repo_dir / "README.md").read_text(encoding="utf-8")
-                rendered = gitlab.render_markdown(readme, full_path)
-                render_result = validate_rendered_math(readme, rendered)
+                render_result = validate_math_in_chunks(
+                    gitlab,
+                    readme,
+                    full_path,
+                    args.math_validation_chunk_size,
+                )
                 pushed_commit = push_repository(problem, str(project["http_url_to_repo"]), token)
                 remote_readme = gitlab.raw_readme(int(project["id"]))
                 if _sha256_text(remote_readme) != _sha256_text(readme):
@@ -820,6 +986,28 @@ def publish(args: argparse.Namespace) -> int:
                     project_url=str(project["web_url"]),
                     commit=pushed_commit,
                 )
+            except MathValidationError as error:
+                failures += 1
+                source = (problem.repo_dir / "README.md").read_text(encoding="utf-8")
+                validation_block = {
+                    "candidate_id": problem.candidate_id,
+                    "publication_id": problem.publication_id,
+                    "topic_id": problem.topic_id,
+                    "reason": "gitlab_markdown_validation_failed",
+                    "readme_sha256": _sha256_text(source),
+                    "error": str(error),
+                    **error.details,
+                    "blocked_at": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                    ),
+                }
+                blocked[problem.problem_id] = validation_block
+                _save_ledger(ledger_path, ledger)
+                _print_event(
+                    "math_validation_failed",
+                    problem_id=problem.problem_id,
+                    **validation_block,
+                )
             except Exception as error:  # isolate one Problem from the remaining batch
                 failures += 1
                 _print_event(
@@ -845,15 +1033,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--problem-id")
     parser.add_argument("--max-items", type=int)
     parser.add_argument(
-        "--max-rendered-math-nodes",
+        "--math-validation-chunk-size",
         type=int,
         default=int(
             os.environ.get(
-                "GEWU_GITLAB_MAX_RENDERED_MATH_NODES",
-                str(DEFAULT_MAX_RENDERED_MATH_NODES),
+                "GEWU_GITLAB_MATH_VALIDATION_CHUNK_SIZE",
+                str(DEFAULT_MATH_VALIDATION_CHUNK_SIZE),
             )
         ),
-        help="block publication before project creation when README math exceeds this GitLab limit",
+        help="maximum formulas per temporary GitLab Markdown validation chunk",
     )
     parser.add_argument(
         "--retry-blocked",
@@ -867,6 +1055,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     try:
+        if not 1 <= args.math_validation_chunk_size <= 40:
+            raise PublishError(
+                "math validation chunk size must be between 1 and 40"
+            )
         return publish(args)
     except BlockingIOError:
         _print_event("skipped", reason="another publisher process holds the lock")
