@@ -2034,7 +2034,7 @@ Return empty lists for disabled source modes.
                     f"all configured source routes failed for {domain_id}"
                 )
             missing_global_ids = sorted(selected_global_ids - found_global_ids)
-            if missing_global_ids:
+            if missing_global_ids and not records:
                 raise CampaignError(
                     "Discovery selected LKM open questions absent from the "
                     "re-fetched paper graphs: " + ", ".join(missing_global_ids)
@@ -2056,6 +2056,7 @@ Return empty lists for disabled source modes.
                     "count": len(records),
                     "lkm_open_question_count": len(lkm_questions),
                     "topic_search_lead_count": len(records) - len(lkm_questions),
+                    "missing_selected_global_ids": missing_global_ids,
                     "source_records": records,
                     "open_questions": lkm_questions,
                 },
@@ -3349,15 +3350,27 @@ and null `problem`.
                 previous_compile = _load_json(output_path)
                 readme_path = repo_dir / "README.md"
                 expected_hash = str(previous_compile.get("readme_sha256") or "")
-                if (
-                    not readme_path.is_file()
-                    or not expected_hash
-                    or file_sha256(readme_path) != expected_hash
-                ):
+                if not readme_path.is_file() or not expected_hash:
                     raise CampaignError(
                         f"refusing to overwrite modified problem repository: {repo_dir}"
                     )
                 self._validate_solution_repo_git(repo_dir, previous_compile)
+                if file_sha256(readme_path) != expected_hash:
+                    # Publication and skill registration may legitimately add a
+                    # committed README revision after compile. A clean descendant
+                    # worktree is reusable; uncommitted edits remain protected.
+                    worktree = subprocess.run(
+                        ["git", "status", "--porcelain", "--untracked-files=all"],
+                        cwd=repo_dir,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                    )
+                    if worktree.returncode != 0 or worktree.stdout.strip():
+                        raise CampaignError(
+                            "refusing to overwrite modified problem repository: "
+                            f"{repo_dir}"
+                        )
 
         def produce() -> Produced:
             if repo_dir.is_dir() and not any(repo_dir.iterdir()):

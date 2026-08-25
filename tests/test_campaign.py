@@ -1073,6 +1073,86 @@ def test_campaign_does_not_treat_total_lkm_failure_as_zero_questions(
     assert state["status"] == "failed"
 
 
+def test_ingest_keeps_verified_records_when_one_lkm_selection_disappears(
+    tmp_path: Path,
+) -> None:
+    def drifting_collector(
+        *,
+        paper_id: str | None = None,
+        doi: str | None = None,
+        title: str | None = None,
+        raw_out: Path,
+        out: Path,
+        timeout: float,
+    ) -> dict[str, Any]:
+        assert paper_id == "PAPER-DRIFT" and doi is None and title is None
+        assert timeout == 30
+        raw_out.parent.mkdir(parents=True, exist_ok=True)
+        dump_json(raw_out, {"code": 0, "trace_id": "drift-trace"})
+        payload = {
+            "trace_id": "drift-trace",
+            "count": 1,
+            "open_questions": [
+                {
+                    "id": "current-question",
+                    "global_id": "current-global-id",
+                    "content": "A different current graph question.",
+                    "paper_id": "PAPER-DRIFT",
+                    "paper_title": "A changing paper graph",
+                    "paper_doi": "",
+                }
+            ],
+        }
+        dump_json(out, payload)
+        return payload
+
+    pipeline = start_campaign(
+        tmp_path,
+        "partial-lkm-drift",
+        limits_overrides={"questions_per_domain": 2},
+        paper_collector=drifting_collector,
+    )
+    source = {
+        "papers": [
+            {
+                "paper_id": "PAPER-DRIFT",
+                "doi": "",
+                "title": "A changing paper graph",
+                "selected_open_questions": [
+                    {
+                        "global_id": "disappeared-global-id",
+                        "summary": "This item existed during Discovery.",
+                    }
+                ],
+            }
+        ],
+        "problem_summaries": [
+            {
+                "lead_id": "stable-topic-lead",
+                "summary": "A separate stable topic-search lead.",
+                "source_refs": [
+                    {"identifier": "LKM-STABLE", "kind": "lkm", "note": "stable"}
+                ],
+            }
+        ],
+    }
+
+    ingested = pipeline._ingest_domain(
+        source,
+        "mathematics",
+        pipeline.run_dir / "domains" / "mathematics",
+        ["lkm_open_questions", "topic_search"],
+    )
+
+    assert ingested["count"] == 1
+    assert ingested["lkm_open_question_count"] == 0
+    assert ingested["topic_search_lead_count"] == 1
+    assert ingested["missing_selected_global_ids"] == ["disappeared-global-id"]
+    assert ingested["source_records"][0]["source_key"] == (
+        "lead:mathematics:stable-topic-lead"
+    )
+
+
 def test_ingest_retries_paper_id_then_doi_then_title(tmp_path: Path) -> None:
     calls: list[dict[str, str]] = []
 
@@ -1291,8 +1371,18 @@ def test_cached_compile_requires_git_integrity_and_allows_descendant_commits(
     compiled = pipeline._compile(candidate, research_assessment, verdict)
     repo_dir = Path(compiled["solution_repo"])
     notes = repo_dir / "research-notes.md"
+    readme = repo_dir / "README.md"
     notes.write_text("preserve this user-owned work\n", encoding="utf-8")
-    subprocess.run(["git", "add", "research-notes.md"], cwd=repo_dir, check=True)
+    readme.write_text(
+        readme.read_text(encoding="utf-8")
+        + "\n## Registered Skill\n\nPublished.\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", "research-notes.md", "README.md"],
+        cwd=repo_dir,
+        check=True,
+    )
     subprocess.run(
         [
             "git",
@@ -1312,6 +1402,7 @@ def test_cached_compile_requires_git_integrity_and_allows_descendant_commits(
 
     assert pipeline._compile(candidate, research_assessment, verdict) == compiled
     assert notes.read_text(encoding="utf-8") == "preserve this user-owned work\n"
+    assert "## Registered Skill" in readme.read_text(encoding="utf-8")
 
     shutil.rmtree(repo_dir / ".git")
     with pytest.raises(CampaignError, match="lost its independent Git metadata"):
