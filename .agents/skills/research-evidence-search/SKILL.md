@@ -25,6 +25,29 @@ isolated sentence.
 
 ## Search and evidence record
 
+In the deployed Claude runtime, the same skill is registered under
+`.claude/skills/research-evidence-search`. If a Skill call is unavailable,
+read this file and its references directly; do not silently omit the audit.
+
+The deployed `opr-evidence` command is a direct HTTP fallback when native
+WebSearch returns only model narrative or WebFetch's domain verification fails:
+
+```bash
+opr-evidence search "<query>" --route web
+opr-evidence search "<title, author, or literature query>" --route crossref
+opr-evidence fetch "https://<public-primary-source-url>"
+```
+
+`web` retrieves actual Bing RSS entries; `crossref` searches academic metadata,
+not the general web or full text. These are distinct routes, not substitutes
+for primary-source verification. Fetch can extract accessible PDFs when
+pdftotext is installed. An empty result, API error, permission denial,
+paywall, or bot challenge is not evidence of absence or of an open problem.
+Native search text without source URLs and titles is not a successful search.
+Keep the real query/URL and returned evidence in the candidate workspace;
+never present a model's remembered literature as retrieved evidence. If all
+available relevant routes fail, record the failure and keep `uncertain`.
+
 Search by topic, title, author, DOI, arXiv ID, LKM paper ID, theorem, method,
 benchmark, formula, or citation. Feed identifiers and aliases between web and
 LKM routes. Prefer primary papers and authoritative repositories.

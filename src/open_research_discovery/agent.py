@@ -753,6 +753,22 @@ class ClaudeRunner(_PromptCliRunner):
     OUTPUT_FORMAT = "json"
     MODEL_FLAG = "--model"
 
+    def run(self, *, prompt: str, **kwargs: Any) -> AgentRun:
+        # Explicit filesystem fallback also works when a run root is outside
+        # Claude's ancestor-based project skill discovery scope.
+        skill = self.repository_root / ".agents/skills/research-evidence-search/SKILL.md"
+        if skill.is_file():
+            prompt += (
+                "\n\nRuntime retrieval configuration: research-evidence-search is registered "
+                "for Claude. If Skill discovery fails, read " + str(skill) +
+                " and its referenced files directly. The opr-evidence command offers "
+                "real HTTP web search, academic metadata search and public page/PDF "
+                "retrieval when native web tools fail. Search prose without actual "
+                "source URLs/titles is not retrieval evidence. Preserve failed routes "
+                "and uncertainty. Do not invoke nested agents or other model CLIs."
+            )
+        return super().run(prompt=prompt, **kwargs)
+
     def __init__(
         self,
         *,

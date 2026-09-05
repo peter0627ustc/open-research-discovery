@@ -160,3 +160,20 @@ award category (`mathematics` / `physics`), not a verified paper-level taxonomy.
 
 Ordinary topic mode remains `discovery campaign init --topic ... --out ...`,
 with both existing LKM and topic-search routes and their configured candidate cap.
+## Bounded author scheduling
+
+For four simultaneous primary authors with at most eight agent calls each,
+set `agents.author_workers: 4`, `agents.agent_workers_per_author: 8`,
+`agents.workers: 32`, `agents.topic_workers: 32`, and
+`agents.candidate_workers_per_topic: 1`. Each author can then have eight paper
+pipelines active; each paper's candidates pass sequentially through research
+and review. Alternatively use 16 paper workers and two candidate workers per
+paper: each author then has four active papers, each reserving two agent lanes.
+The global worker semaphore still limits model calls across the campaign.
+
+An author remains in the active set until all its paper tasks finish. The next
+author then takes its place. Shared DOI papers are scheduled exactly once,
+under the earliest author in the configured author list; every coauthor ID is
+retained for provenance and incremental deduplication. Empty and failed paper
+outcomes remain distinct and resumable as before. Omitting both new settings
+preserves the previous paper-worker scheduler; topic mode is unchanged.

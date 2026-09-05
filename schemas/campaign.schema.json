@@ -127,6 +127,14 @@
           "maximum": 128,
           "default": 1
         },
+        "author_workers": {
+          "description": "Author mode only: maximum active primary-author queues; set together with agent_workers_per_author.",
+          "type": "integer", "minimum": 1, "maximum": 128
+        },
+        "agent_workers_per_author": {
+          "description": "Author mode only: maximum reserved agent lanes per primary author, including research, review and dedup.",
+          "type": "integer", "minimum": 1, "maximum": 128
+        },
         "retries": {
           "description": "Retries after an invocation failure; contract failures are not retried. Defaults to 1.",
           "type": "integer",

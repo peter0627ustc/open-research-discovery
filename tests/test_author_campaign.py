@@ -312,3 +312,60 @@ def test_cli_initialization_preserves_original_topic_command(tmp_path, capsys):
     assert main(["campaign", "init", "--topic", "quantum systems", "--out", str(topic_path)]) == 0
     from open_research_discovery.common import load_yaml
     assert load_yaml(topic_path)["limits"]["questions_per_domain"] == 20
+
+
+def test_author_limits_validate_as_a_pair(tmp_path):
+    _, config = config_file(tmp_path)
+    config["agents"]["author_workers"] = 4
+    with pytest.raises(ValueError, match="together"):
+        validate_author_config(config)
+    config["agents"]["agent_workers_per_author"] = 8
+    validate_author_config(config)
+    schema = json.loads((ROOT / "schemas/campaign.schema.json").read_text())
+    Draft202012Validator(schema).validate(config)
+    config["agents"]["candidate_workers_per_topic"] = 9
+    with pytest.raises(ValueError, match="per-author"):
+        validate_author_config(config)
+
+
+@pytest.mark.parametrize("candidate_workers", [1, 2])
+def test_four_author_scheduler_bounds_and_preserves_shared_papers(tmp_path, candidate_workers):
+    import threading
+    import time
+    from types import SimpleNamespace
+    from open_research_discovery.author_campaign import AuthorCampaign
+
+    tasks = [{"id": f"P{a}-{p}", "author_ids": [f"P{a}"]}
+             for a in range(6) for p in range(12)]
+    tasks[0]["author_ids"].append("P5")  # One task, all attribution retained.
+    pipeline = SimpleNamespace(
+        problem_root=tmp_path,
+        topic_workers=32 // candidate_workers,
+        candidate_workers_per_topic=candidate_workers,
+        config={"agents": {"author_workers": 4, "agent_workers_per_author": 8},
+                "authors": [{"id": f"P{a}"} for a in range(6)], "topics": tasks},
+    )
+    campaign = AuthorCampaign(pipeline)
+    lock = threading.Lock()
+    active, seen = Counter(), []
+    peak_authors = peak_lanes = 0
+    def paper(task):
+        nonlocal peak_authors, peak_lanes
+        owner = task["author_ids"][0]
+        with lock:
+            active[owner] += candidate_workers
+            assert active[owner] <= 8
+            assert sum(value > 0 for value in active.values()) <= 4
+            assert sum(active.values()) <= 32
+            peak_authors = max(peak_authors, sum(value > 0 for value in active.values()))
+            peak_lanes = max(peak_lanes, sum(active.values()))
+            seen.append(task["id"])
+        time.sleep(0.03)
+        with lock:
+            active[owner] -= candidate_workers
+    campaign.paper = paper
+    campaign.schedule()
+    assert Counter(seen) == Counter(task["id"] for task in tasks)
+    assert peak_authors == 4
+    assert peak_lanes > 8
+    assert tasks[0]["author_ids"] == ["P0", "P5"]

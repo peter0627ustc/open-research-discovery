@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import threading
-from collections import Counter
+from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,15 @@ def _read(path: Path) -> dict[str, Any]:
 
 
 def validate_author_config(config: dict[str, Any]) -> None:
+    agents = config.get("agents", {})
+    if ("author_workers" in agents) != ("agent_workers_per_author" in agents):
+        raise ValueError("author_workers and agent_workers_per_author must be configured together")
+    if "author_workers" in agents:
+        for field in ("author_workers", "agent_workers_per_author"):
+            if type(agents[field]) is not int or agents[field] < 1:
+                raise ValueError(f"{field} must be a positive integer")
+        if agents.get("candidate_workers_per_topic", 1) > agents["agent_workers_per_author"]:
+            raise ValueError("candidate workers per paper exceed the per-author agent limit")
     authors = [author["id"] for author in config["authors"]]
     if len(authors) != len(set(authors)):
         raise ValueError("duplicate author IDs")
@@ -364,9 +373,54 @@ class AuthorCampaign:
                 self.save()
                 dump_json_atomic(self.p.run_dir / "papers" / task["id"] / "status.json", result)
 
-    def run(self) -> dict[str, Any]:
-        self.p.state.update(status="running", error="")
-        self.p.ledger.save()
+    def schedule(self) -> None:
+        """Keep a bounded set of primary authors active until their queues drain.
+
+        A paper owns up to candidate_workers_per_topic agent lanes until it
+        finishes; discovery and dedup happen outside its concurrent audits.
+        Reserving those lanes therefore bounds *all* calls, including retries,
+        without changing the shared pipeline's agent implementation. Shared
+        DOI tasks are scheduled once under their first configured author; all
+        coauthor provenance and within-author dedup associations remain intact.
+        """
+        agents = self.p.config["agents"]
+        if "author_workers" in agents:
+            order = {author["id"]: i for i, author in enumerate(self.p.config["authors"])}
+            queues: dict[str, deque] = {}
+            for task in self.p.config["topics"]:
+                owner = min(task["author_ids"], key=order.__getitem__)
+                queues.setdefault(owner, deque()).append(task)
+            remaining = deque(sorted(queues, key=order.__getitem__))
+            active: dict[str, int] = {}
+            lanes = max(1, self.p.candidate_workers_per_topic)
+            per_author = agents["agent_workers_per_author"] // lanes
+            pending: dict[Any, str] = {}
+            with ThreadPoolExecutor(max_workers=self.p.topic_workers) as executor:
+                while remaining or active or pending:
+                    for author in list(active):
+                        if not queues[author] and active[author] == 0:
+                            del active[author]
+                    while remaining and len(active) < agents["author_workers"]:
+                        active[remaining.popleft()] = 0
+                    # One submission per author per round avoids starving later
+                    # authors when the global paper-worker cap is smaller.
+                    progressed = True
+                    while progressed and len(pending) < self.p.topic_workers:
+                        progressed = False
+                        for author in active:
+                            if len(pending) >= self.p.topic_workers:
+                                break
+                            if queues[author] and active[author] < per_author:
+                                task = queues[author].popleft()
+                                pending[executor.submit(self.paper, task)] = author
+                                active[author] += 1
+                                progressed = True
+                    if pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            active[pending.pop(future)] -= 1
+                            future.result()
+            return
         tasks = iter(self.p.config["topics"])
         # Bound queued work as well as active work for 50k+ literature lists.
         with ThreadPoolExecutor(max_workers=self.p.topic_workers) as executor:
@@ -382,6 +436,11 @@ class AuthorCampaign:
                     task = next(tasks, None)
                     if task is not None:
                         pending.add(executor.submit(self.paper, task))
+
+    def run(self) -> dict[str, Any]:
+        self.p.state.update(status="running", error="")
+        self.p.ledger.save()
+        self.schedule()
         counts = Counter(row["status"] for row in self.outcomes.values())
         accepted = [entry["problem_id"] for entry in self.p.state["candidates"].values()
                     if entry.get("status") == "accepted"]
