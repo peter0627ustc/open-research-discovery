@@ -5,6 +5,12 @@ Work from the research-problem lifecycle, not isolated search hits.
 `discovery campaign` is the default problem-generation workflow. Benchmark
 construction and evaluation are separate and run only when explicitly requested.
 
+The opt-in `mode: author_literature` is a separate entry path described in
+`docs/author-literature-campaign.md`: each input DOI is a scheduling unit,
+not a capped research topic. It ingests all dedicated LKM open questions for
+that DOI, preserves DOI provenance, and deduplicates incrementally within
+authors before compilation. The topic limits below apply to the default mode.
+
 1. Accept one or more user topics. Campaigns may use both
    `lkm_open_questions` and `topic_search` source routes.
 2. Preserve raw direct-LKM responses and the provenance of every LKM, web, book,

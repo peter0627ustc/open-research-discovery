@@ -851,6 +851,10 @@ class CampaignPipeline:
         errors = _schema_errors(raw, schema_path)
         if errors:
             raise CampaignError("invalid campaign config: " + "; ".join(errors))
+        if raw.get("mode") == "author_literature":
+            from .author_campaign import validate_author_config
+
+            validate_author_config(raw)
         config = json.loads(json.dumps(raw))
         base = config_path.resolve().parent
         for field in ("runs_root", "problem_root", "pool_root"):
@@ -1085,6 +1089,8 @@ class CampaignPipeline:
         compile failures remain pending and do not block other candidates.
         """
 
+        if self.config.get("mode") == "author_literature":
+            raise CampaignError("author mode requires campaign resume so author dedup cannot be bypassed")
         with self._exclusive_run_access():
             pending_states = sorted(
                 (
@@ -1186,6 +1192,10 @@ class CampaignPipeline:
             }
 
     def _run_locked(self) -> dict[str, Any]:
+        if self.config.get("mode") == "author_literature":
+            from .author_campaign import run_author_campaign
+
+            return run_author_campaign(self)
         self.state["status"] = "running"
         self.state["error"] = ""
         self.state["updated_at"] = utc_now()

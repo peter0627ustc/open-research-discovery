@@ -22,6 +22,11 @@ Campaigns are deliberately broader than a plain LKM-only lookup:
 Benchmark building and evaluation remain separate explicit workflows. Ordinary
 problem generation uses `discovery campaign`.
 
+An opt-in [author-literature mode](docs/author-literature-campaign.md) processes
+each supplied DOI once, without a candidate count cap, and incrementally
+deduplicates compiled problems within each author. The default topic workflow
+and its existing limits remain unchanged.
+
 ## First principles
 
 An interesting question is not automatically a usable research problem. A final

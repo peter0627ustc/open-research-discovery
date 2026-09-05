@@ -65,6 +65,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="source route; defaults to both and may be repeated",
     )
     run = campaign_actions.add_parser("run")
+    authors = campaign_actions.add_parser(
+        "init-authors", help="create an uncapped DOI-by-DOI author literature campaign"
+    )
+    authors.add_argument("--literature-list", type=Path, required=True)
+    authors.add_argument("--author-id", action="append", dest="author_ids")
+    authors.add_argument("--out", type=Path, required=True)
+    authors.add_argument("--force", action="store_true")
+    authors.add_argument("--backend", choices=("codex", "kimi", "claude", "trae"), default="claude")
+    authors.add_argument("--model", default="GLM-5.3")
+    authors.add_argument("--workers", type=int, choices=range(1, 129), default=32)
+    authors.add_argument("--paper-workers", type=int, choices=range(1, 129), default=16)
+    authors.add_argument("--candidate-workers", type=int, choices=range(1, 129), default=2)
     run.add_argument("config", type=Path)
     run.add_argument("--run-id")
 
@@ -184,6 +196,21 @@ def _print(value: object) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     repo = repository_root()
+    if args.resource == "campaign" and args.action == "init-authors":
+        from .author_campaign import build_author_config
+
+        if args.out.exists() and not args.force:
+            raise SystemExit(f"config already exists: {args.out} (use --force to overwrite)")
+        config = build_author_config(
+            args.literature_list, args.out.resolve().parent,
+            author_ids=args.author_ids, backend=args.backend, model=args.model,
+            workers=args.workers, paper_workers=args.paper_workers,
+            candidate_workers=args.candidate_workers,
+        )
+        dump_yaml(args.out, config)
+        _print({"config": str(args.out), "authors": len(config["authors"]), "papers": len(config["topics"]),
+                "input_issue_count": len(config["input_issues"]), "candidate_limit": None})
+        return 0
     if args.resource == "campaign" and args.action == "init":
         if args.out.exists() and not args.force:
             raise SystemExit(

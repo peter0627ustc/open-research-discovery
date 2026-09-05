@@ -4,7 +4,35 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "name", "topics", "limits", "agents", "outputs"],
+  "allOf": [
+    {
+      "if": {"required": ["mode"], "properties": {"mode": {"const": "author_literature"}}},
+      "then": {"required": ["authors"], "properties": {"limits": {"not": {"required": ["questions_per_domain"]}}}},
+      "else": {"properties": {"limits": {"required": ["questions_per_domain"]}}}
+    }
+  ],
   "properties": {
+    "mode": {"enum": ["topic", "author_literature"], "default": "topic"},
+    "input_issues": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["literature_id", "author_ids", "doi", "reason"],
+        "properties": {
+          "literature_id": {"type": "string"}, "doi": {"type": "string"},
+          "reason": {"type": "string"},
+          "author_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "authors": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "name"],
+        "properties": {"id": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1}}
+      }
+    },
     "schema_version": {"const": 2},
     "name": {"type": "string", "minLength": 1},
     "topics": {
@@ -17,7 +45,6 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "questions_per_domain",
         "lkm_timeout_seconds"
       ],
       "properties": {
@@ -164,6 +191,9 @@
         "seed_references"
       ],
       "properties": {
+        "author_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "domain": {"type": "string", "minLength": 1},
+        "literature_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
         "title": {"type": "string", "minLength": 1},
         "query": {"type": "string", "minLength": 1},
