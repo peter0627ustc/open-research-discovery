@@ -87,6 +87,8 @@ def test_import_doi_dedup_and_schema(tmp_path):
     assert "questions_per_domain" not in config["limits"]
     schema = json.loads((ROOT / "schemas/campaign.schema.json").read_text())
     Draft202012Validator(schema).validate(config)
+    config["agents"]["timeout_seconds"] = None
+    Draft202012Validator(schema).validate(config)
     config["limits"]["questions_per_domain"] = 1
     assert list(Draft202012Validator(schema).iter_errors(config))
 

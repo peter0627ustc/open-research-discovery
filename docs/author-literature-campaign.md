@@ -75,6 +75,16 @@ creating a config. Publication integration remains a separate authorized step.
 
 ## Concurrency and deduplication
 
+For an explicitly requested end-to-end test with no agent-process deadline,
+set `agents.timeout_seconds: null`. Defaults remain finite; this does not
+disable HTTP/tool timeouts or repair CLI permissions. Monitor such runs because
+an unresponsive model call will no longer be stopped by the stage wall clock.
+For a strict single-Claude test, the executable may include verified CLI flags,
+for example `claude --permission-mode acceptEdits --disallowedTools Agent,Task`.
+This permits normal workspace edits without globally bypassing permissions and
+disables built-in delegation. Validate a small workspace write before the test;
+do not assume a process running as root bypasses Claude's own permission policy.
+
 `--paper-workers 16` schedules up to 16 papers concurrently.
 `--candidate-workers 2` runs up to two Research-to-Review chains per paper.
 For each candidate, Review follows Research; they do not run simultaneously

@@ -158,7 +158,7 @@ def _execute_headless(
     cwd: Path,
     env: dict[str, str] | None,
     stdin_text: str | None,
-    timeout_seconds: int,
+    timeout_seconds: int | None,
     events_path: Path,
 ) -> tuple[str, str, int]:
     """Run one headless agent CLI and persist its raw event stream.
@@ -173,7 +173,8 @@ def _execute_headless(
     process group so killpg can reach every descendant. Networked roles keep
     the parent environment (discovery/research may need LKM credentials for
     gaia); every other role gets a sanitized whitelist so secrets never reach
-    a stage that cannot use them.
+    a stage that cannot use them. An explicit None disables the process wall-time
+    deadline (communicate(timeout=None)); finite defaults are unchanged.
     """
     process = subprocess.Popen(
         command,
@@ -310,7 +311,7 @@ class _HeadlessCliRunner:
         repository_root: Path,
         executable: str,
         model: str = "",
-        timeout_seconds: int = 3600,
+        timeout_seconds: int | None = 3600,
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.executable = executable
@@ -354,7 +355,7 @@ class CodexRunner(_HeadlessCliRunner):
         sandbox: str = "read-only",
         networked_sandbox: str = "workspace-write",
         network_access: bool = True,
-        timeout_seconds: int = 3600,
+        timeout_seconds: int | None = 3600,
         structured_output_mode: str = "api",
     ) -> None:
         super().__init__(
@@ -581,7 +582,7 @@ class _PromptCliRunner(_HeadlessCliRunner):
         repository_root: Path,
         executable: str,
         model: str = "",
-        timeout_seconds: int = 3600,
+        timeout_seconds: int | None = 3600,
     ) -> None:
         super().__init__(
             repository_root=repository_root,
@@ -727,7 +728,7 @@ class KimiRunner(_PromptCliRunner):
         repository_root: Path,
         executable: str = "kimi",
         model: str = "",
-        timeout_seconds: int = 3600,
+        timeout_seconds: int | None = 3600,
     ) -> None:
         super().__init__(
             repository_root=repository_root,
@@ -758,7 +759,7 @@ class ClaudeRunner(_PromptCliRunner):
         repository_root: Path,
         executable: str = "claude",
         model: str = "",
-        timeout_seconds: int = 3600,
+        timeout_seconds: int | None = 3600,
     ) -> None:
         super().__init__(
             repository_root=repository_root,
@@ -829,7 +830,7 @@ class TraeRunner(_HeadlessCliRunner):
         executable: str = "trae-cli",
         config_file: str = "",
         model: str = "",
-        timeout_seconds: int = 3600,
+        timeout_seconds: int | None = 3600,
     ) -> None:
         super().__init__(
             repository_root=repository_root,

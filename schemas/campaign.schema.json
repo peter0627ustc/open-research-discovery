@@ -138,7 +138,7 @@
           "type": "number",
           "minimum": 0
         },
-        "timeout_seconds": {"type": "integer", "minimum": 60, "maximum": 14400}
+        "timeout_seconds": {"description": "Agent CLI process wall-time limit in seconds. Explicit null disables this deadline; individual HTTP/tool timeouts are unaffected.", "type": ["integer", "null"], "minimum": 60, "maximum": 14400}
       }
     },
     "outputs": {

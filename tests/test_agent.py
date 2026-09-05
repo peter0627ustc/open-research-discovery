@@ -16,6 +16,26 @@ from open_research_discovery.agent import (
 )
 
 
+def test_explicit_null_disables_process_deadline(tmp_path, monkeypatch):
+    from open_research_discovery import agent
+    original = agent.subprocess.Popen
+    observed = []
+
+    class RecordingPopen(original):
+        def communicate(self, input=None, timeout=None):
+            observed.append(timeout)
+            return super().communicate(input=input, timeout=timeout)
+
+    monkeypatch.setattr(agent.subprocess, "Popen", RecordingPopen)
+    stdout, _, code = agent._execute_headless(
+        role="research", command=[sys.executable, "-c", "print('done')"],
+        cwd=tmp_path, env=None, stdin_text=None, timeout_seconds=None,
+        events_path=tmp_path / "events.jsonl",
+    )
+    assert code == 0 and stdout.strip() == "done"
+    assert observed == [None]
+
+
 def test_stage_schemas_avoid_unsupported_codex_keywords() -> None:
     repository_root = Path(__file__).resolve().parents[1]
 
