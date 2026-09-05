@@ -575,6 +575,7 @@ class _PromptCliRunner(_HeadlessCliRunner):
     BACKEND: str = ""
     OUTPUT_FORMAT: str = ""
     MODEL_FLAG: str = ""
+    PROMPT_ON_STDIN = False
 
     def __init__(
         self,
@@ -623,13 +624,12 @@ class _PromptCliRunner(_HeadlessCliRunner):
         last_error: Exception | None = None
         for attempt in range(2):
             full_prompt = prompt + schema_instruction + feedback
-            command = [
-                *executable_parts,
-                "-p",
-                full_prompt,
-                "--output-format",
-                self.OUTPUT_FORMAT,
-            ]
+            command = [*executable_parts, "-p"]
+            if self.PROMPT_ON_STDIN:
+                command.extend(["--input-format", "text"])
+            else:
+                command.append(full_prompt)
+            command.extend(["--output-format", self.OUTPUT_FORMAT])
             if self.model:
                 command.extend([self.MODEL_FLAG, self.model])
             # The prompt rides in argv for these CLIs; keep it out of persisted
@@ -651,7 +651,7 @@ class _PromptCliRunner(_HeadlessCliRunner):
                 command=command,
                 cwd=workdir,
                 env=self._environment(role),
-                stdin_text=None,
+                stdin_text=full_prompt if self.PROMPT_ON_STDIN else None,
                 timeout_seconds=self.timeout_seconds,
                 events_path=events_path,
             )
@@ -752,6 +752,9 @@ class ClaudeRunner(_PromptCliRunner):
     BACKEND = "claude"
     OUTPUT_FORMAT = "json"
     MODEL_FLAG = "--model"
+    # Claude accepts print-mode prompts on stdin. This avoids Linux's
+    # per-argument size limit for large, schema-constrained prompts.
+    PROMPT_ON_STDIN = True
 
     def run(self, *, prompt: str, **kwargs: Any) -> AgentRun:
         # Explicit filesystem fallback also works when a run root is outside

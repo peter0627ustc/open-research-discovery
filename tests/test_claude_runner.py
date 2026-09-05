@@ -78,7 +78,7 @@ import json
 import os
 import pathlib
 
-prompt = sys.argv[sys.argv.index("-p") + 1]
+prompt = sys.stdin.read()
 pathlib.Path({str(capture)!r}).write_text(
     json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd(), "prompt": prompt}}),
     encoding="utf-8",
@@ -99,7 +99,9 @@ result = json.dumps({{"ok": True}})
     captured = json.loads(capture.read_text(encoding="utf-8"))
     argv = captured["argv"]
     assert argv[0] == "-p"
-    assert argv[2:] == [
+    assert argv[1:] == [
+        "--input-format",
+        "text",
         "--output-format",
         "json",
         "--model",
@@ -119,6 +121,28 @@ result = json.dumps({{"ok": True}})
     assert "<prompt>" in logged
     assert not any("return structured output" in item for item in logged)
     assert result.metadata["claude_version"] == "fake-claude 1.0"
+
+
+def test_claude_runner_sends_large_prompt_over_stdin(tmp_path: Path) -> None:
+    capture = tmp_path / "stdin-length.txt"
+    executable = _write_fake_claude(
+        tmp_path,
+        f"""
+from pathlib import Path
+prompt = sys.stdin.read()
+Path({str(capture)!r}).write_text(str(len(prompt.encode('utf-8'))))
+result = '{{"ok": true}}'
+""",
+    )
+    schema_path = _write_schema(tmp_path)
+    runner = ClaudeRunner(
+        repository_root=tmp_path, executable=executable, timeout_seconds=30
+    )
+    kwargs = _run_kwargs(tmp_path, schema_path)
+    kwargs["prompt"] = "x" * 200_000
+    result = runner.run(**kwargs)
+    assert result.output == {"ok": True}
+    assert int(capture.read_text()) > 200_000
 
 
 def test_claude_runner_omits_model_flag_without_model(tmp_path: Path) -> None:
@@ -400,7 +424,7 @@ from pathlib import Path
 counter = Path({str(counter)!r})
 calls = int(counter.read_text()) if counter.exists() else 0
 counter.write_text(str(calls + 1))
-Path({str(capture)!r}).write_text(sys.argv[sys.argv.index("-p") + 1])
+Path({str(capture)!r}).write_text(sys.stdin.read())
 if calls == 0:
     result = '{{\\"bad\\": true}}'
 else:

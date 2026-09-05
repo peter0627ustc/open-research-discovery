@@ -73,7 +73,9 @@ class Runner(TopicAgentRunner):
             return super().run(**kwargs)
         self.calls.append("author-dedup")
         data = json.loads(kwargs["prompt"].split("\n", 1)[1])
-        output = {"duplicate_of": next(iter(data["existing"])), "reason": "Identical audited objective and assumptions."}
+        self.dedup_inputs = getattr(self, "dedup_inputs", [])
+        self.dedup_inputs.append(data)
+        output = {"duplicate_of": next(iter(data["existing_titles"])), "reason": "Titles clearly denote the same problem."}
         dump_json(kwargs["output_path"], output)
         dump_json(kwargs["events_path"], {"role": "author-dedup"})
         return AgentRun(output=output, metadata={"exit_code": 0})
@@ -208,6 +210,8 @@ def test_semantic_dedup_records_reason(tmp_path):
     result = pipeline.run()
     assert pipeline.state["status"] == "completed", result
     assert "author-dedup" in runner.calls
+    assert set(runner.dedup_inputs[0]) == {"incoming_title", "existing_titles"}
+    assert all(isinstance(title, str) for title in runner.dedup_inputs[0]["existing_titles"].values())
     assert len(result["canonical_problem_ids"]) == 1
     assert list(pipeline.run_dir.glob("candidates/*/dedup-*.json"))
 

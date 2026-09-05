@@ -91,13 +91,15 @@ For each candidate, Review follows Research; they do not run simultaneously
 against the same incomplete result. The campaign-wide limit of 32 also covers
 model calls used for deduplication and direct LKM graph requests.
 
-Deduplication first compares shared LKM question IDs and exact normalized source
-text. Otherwise, an agent compares the reviewed statement with all same-author
-canonical records in bounded batches of 24. The contract requires equivalence of
-objective, assumptions, regime and completion boundary. Related topics, special
-cases and extensions must remain distinct; uncertain matches are kept separate.
-Decisions and reasons remain in `candidates/*/dedup-*.json` and
-`author-provenance.json`. This judgment is model-based, not a proof of equivalence.
+Deduplication first compares exact LKM source keys. Otherwise, an agent compares
+only the incoming title with titles of same-author canonical records, in bounded
+batches of 24. Exact normalized title matches are deterministic. Semantic title
+matches are deliberately conservative: related topics, special cases and
+extensions remain distinct, and uncertain matches are kept separate. No problem
+statement, references, significance narrative, verification contract or other
+full record is supplied to the title comparison. Decisions and reasons remain in
+`candidates/*/dedup-*.json` and `author-provenance.json`. This title judgment is
+model-based, not a proof of problem equivalence.
 
 Only deduplication plus index/compile commits are serialized; independent
 Research/Review work continues. One writer lock prevents two campaigns sharing

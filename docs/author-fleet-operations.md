@@ -28,6 +28,11 @@ treating model-only web-search prose as evidence. Native web tools can still
 fail on some sites. Paywalls, missing literature and unavailable sources remain
 limitations and must never be converted into `open` outcomes.
 
+Claude print-mode prompts are transported over standard input rather than as a
+single command-line argument. This avoids the Linux per-argument size limit.
+Author deduplication nevertheless sends titles only; the transport fix is a
+defensive guarantee, not permission to restore full-record semantic comparison.
+
 `scripts/author_fleet_runtime.py preflight` exercises direct web and academic
 search, primary-page fetching, direct LKM graph retrieval, an actual Claude Skill
 invocation, Claude's LKM/search commands, a file write and GitLab authentication.
