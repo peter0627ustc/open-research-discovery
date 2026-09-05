@@ -316,6 +316,9 @@ class AuthorCampaign:
             self.p.ledger.update_candidate(cid, {
                 "status": "accepted" if own else "duplicate_author",
                 "canonical_problem_id": key, "author_dedup_reason": reason,
+                # A resumed candidate may still carry the historical compile
+                # exception; success must not leave a stale active error.
+                "error": "",
             })
             dump_json_atomic(self.p.run_dir / "candidates" / cid / "author-provenance.json", {
                 **member, "author_ids": task["author_ids"], "canonical_problem_id": key,

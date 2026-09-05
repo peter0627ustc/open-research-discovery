@@ -252,6 +252,9 @@ def test_compile_failure_resumes_without_research_or_graph_replay(tmp_path, monk
     assert len(resumed.run()["accepted_problem_ids"]) == 1
     assert runner.calls == calls
     assert len(collector.calls) == 1
+    accepted = next(iter(resumed.state["candidates"].values()))
+    assert accepted["status"] == "accepted"
+    assert accepted["error"] == ""
 
 
 def test_unknown_semantic_merge_is_quarantined(tmp_path):
