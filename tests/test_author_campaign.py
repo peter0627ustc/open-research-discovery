@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -56,9 +57,14 @@ class Collector:
         self.calls = []
 
     def __call__(self, **kwargs):
-        doi = kwargs["doi"]
-        self.calls.append(doi)
-        payload = self.payloads.get(doi, graph(doi))
+        key, identifier = next(
+            (key, kwargs[key]) for key in ("doi", "title", "paper_id")
+            if kwargs.get(key)
+        )
+        self.calls.append(identifier if key == "doi" else (key, identifier))
+        payload = self.payloads.get(
+            (key, identifier), self.payloads.get(identifier, graph(identifier))
+        )
         if isinstance(payload, Exception):
             raise payload
         dump_json(kwargs["raw_out"], payload)
@@ -166,6 +172,178 @@ def test_empty_success_is_no_questions(tmp_path):
     assert result["paper_status_counts"] == {"no_questions": 2}
     assert pipeline.state["status"] == "completed"
     assert runner.calls == []
+
+
+def test_lkm_290013_exact_doi_empty_is_no_questions(tmp_path):
+    path, config = config_file(tmp_path)
+    config["topics"] = config["topics"][:1]
+    dump_yaml(path, config)
+    payload = graph("10.1234/one", [])
+    payload["code"] = 290013
+    pipeline = _start_pipeline(
+        path, repository_root=ROOT, agent_runner=Runner(),
+        paper_collector=Collector({"10.1234/one": payload}),
+    )
+    result = pipeline.run()
+    assert result["paper_status_counts"] == {"no_questions": 1}
+    assert pipeline.state["status"] == "completed"
+
+
+def test_lkm_290013_requires_exact_doi_and_explicit_empty(tmp_path):
+    _, config = config_file(tmp_path)
+    task = config["topics"][0]
+    wrong = graph("10.1234/other", [])
+    wrong["code"] = 290013
+    with pytest.raises(LKMResponseError, match="exact-DOI"):
+        records_from_graph(wrong, task, "graph.json")
+    nonempty = graph("10.1234/one")
+    nonempty["code"] = 290013
+    with pytest.raises(LKMResponseError, match="exact-DOI"):
+        records_from_graph(nonempty, task, "graph.json")
+
+
+def test_existing_lkm_290013_is_reclassified_without_network_retry(tmp_path):
+    path, config = config_file(tmp_path)
+    config["topics"] = config["topics"][:1]
+    dump_yaml(path, config)
+    collector = Collector()
+    pipeline = _start_pipeline(
+        path, repository_root=ROOT, agent_runner=Runner(),
+        paper_collector=collector,
+    )
+    task = config["topics"][0]
+    folder = pipeline.run_dir / "papers" / task["id"]
+    folder.mkdir(parents=True)
+    raw = folder / "graph-0001.json"
+    payload = graph("10.1234/one", [])
+    payload["code"] = 290013
+    dump_json(raw, payload)
+    dump_json(folder / "attempt-0001.json", {
+        "doi": "10.1234/one", "status": "failed",
+        "graph": str(raw.relative_to(pipeline.run_dir)),
+    })
+    result = pipeline.run()
+    assert result["paper_status_counts"] == {"no_questions": 1}
+    assert collector.calls == []
+    assert json.loads((folder / "discovery.json").read_text())["reclassified_from"].endswith(
+        "graph-0001.json"
+    )
+
+
+def test_lkm_290011_title_then_exact_doi_paper_id_recovery(tmp_path):
+    path, config = config_file(tmp_path)
+    config["topics"] = config["topics"][:1]
+    dump_yaml(path, config)
+    missing = {"code": 290011, "msg": None, "data": None}
+    title_hit = graph("10.1234/one", [])
+    title_hit["data"]["papers"][0]["paper"]["id"] = "recovered-paper-id"
+    recovered = graph("10.1234/one")
+    collector = Collector({
+        "10.1234/one": missing,
+        ("title", "First paper"): title_hit,
+        ("paper_id", "recovered-paper-id"): recovered,
+    })
+    pipeline = _start_pipeline(
+        path, repository_root=ROOT, agent_runner=Runner(),
+        paper_collector=collector,
+    )
+    result = pipeline.run()
+    assert result["paper_status_counts"] == {"completed": 1}
+    assert collector.calls == [
+        "10.1234/one",
+        ("title", "First paper"),
+        ("paper_id", "recovered-paper-id"),
+    ]
+    folder = next((pipeline.run_dir / "papers").iterdir())
+    assert (folder / "title-lookup-0001.json").is_file()
+    assert (folder / "paper-id-0001.json").is_file()
+
+
+def test_existing_lkm_290011_skips_repeat_doi_lookup(tmp_path):
+    path, config = config_file(tmp_path)
+    config["topics"] = config["topics"][:1]
+    dump_yaml(path, config)
+    title_hit = graph("10.1234/one", [])
+    title_hit["data"]["papers"][0]["paper"]["id"] = "recovered-paper-id"
+    collector = Collector({
+        ("title", "First paper"): title_hit,
+        ("paper_id", "recovered-paper-id"): graph("10.1234/one"),
+    })
+    pipeline = _start_pipeline(
+        path, repository_root=ROOT, agent_runner=Runner(),
+        paper_collector=collector,
+    )
+    task = config["topics"][0]
+    folder = pipeline.run_dir / "papers" / task["id"]
+    folder.mkdir(parents=True)
+    raw = folder / "graph-0001.json"
+    dump_json(raw, {"code": 290011, "msg": None, "data": None})
+    dump_json(folder / "attempt-0001.json", {
+        "doi": "10.1234/one", "status": "failed",
+        "graph": str(raw.relative_to(pipeline.run_dir)),
+    })
+    result = pipeline.run()
+    assert result["paper_status_counts"] == {"completed": 1}
+    assert collector.calls == [
+        ("title", "First paper"),
+        ("paper_id", "recovered-paper-id"),
+    ]
+    second = json.loads((folder / "attempt-0002.json").read_text())
+    assert second["reused_failed_doi_graph"] is True
+
+
+def test_lkm_290011_unmatched_title_is_terminal_source_unavailable(tmp_path):
+    path, config = config_file(tmp_path)
+    config["topics"] = config["topics"][:1]
+    dump_yaml(path, config)
+    collector = Collector({
+        "10.1234/one": {"code": 290011, "msg": None, "data": None},
+        ("title", "First paper"): graph("10.1234/other", []),
+    })
+    runner = Runner()
+    pipeline = _start_pipeline(
+        path, repository_root=ROOT, agent_runner=runner,
+        paper_collector=collector,
+    )
+    result = pipeline.run()
+    assert result["paper_status_counts"] == {"source_unavailable": 1}
+    calls = list(collector.calls)
+    resumed = CampaignPipeline.resume(
+        pipeline.run_dir, repository_root=ROOT, agent_runner=runner,
+        paper_collector=collector, citation_fetcher=_unresolvable_fetch,
+    )
+    assert resumed.run()["paper_status_counts"] == {"source_unavailable": 1}
+    assert collector.calls == calls
+
+
+def test_http_429_retries_only_after_initial_round(tmp_path):
+    path, config = config_file(tmp_path)
+    config["agents"]["topic_workers"] = 1
+    dump_yaml(path, config)
+
+    class RateLimitedOnce(Collector):
+        def __init__(self):
+            super().__init__()
+            self.failed = False
+
+        def __call__(self, **kwargs):
+            doi = kwargs.get("doi")
+            if doi == "10.1234/one" and not self.failed:
+                self.failed = True
+                self.calls.append(doi)
+                raise HTTPError("https://lkm.invalid", 429, "Too Many Requests", {}, None)
+            return super().__call__(**kwargs)
+
+    collector = RateLimitedOnce()
+    pipeline = _start_pipeline(
+        path, repository_root=ROOT, agent_runner=Runner(),
+        paper_collector=collector,
+    )
+    result = pipeline.run()
+    assert result["paper_status_counts"] == {"completed": 2}
+    assert collector.calls == [
+        "10.1234/one", "10.1234/two", "10.1234/one"
+    ]
 
 
 def test_end_to_end_same_author_dedup_resume_and_increment(tmp_path):

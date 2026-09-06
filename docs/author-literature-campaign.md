@@ -19,8 +19,11 @@ In author mode there is no Discovery selection agent:
 1. Import `people[].literature_ids` and the corresponding `literature[]` records.
    Normalize DOI prefixes and case; consolidate shared papers into one work unit.
 2. For each DOI, call LKM `papers/graph` directly with that DOI, using the existing
-   `LKM_ACCESS_KEY`. Require a matching returned DOI. Do not substitute another
-   paper or fall back to unrelated topic search.
+   `LKM_ACCESS_KEY`. Require a matching returned DOI. If LKM returns 290011,
+   perform one title lookup, accept only a result carrying the exact input DOI,
+   and query that result once by its LKM paper ID. If exact identity cannot be
+   recovered, record `source_unavailable`; never substitute another paper or
+   fall back to unrelated topic search.
 3. Ingest **all** nonempty `data.papers[].open_questions[]` entries attached to
    that paper. There is no `questions_per_domain` limit in this mode; configuration
    containing that setting is rejected to avoid giving a false impression of a cap.
@@ -127,8 +130,9 @@ Every paper has `papers/<paper-task-id>/status.json` in its run directory.
 
 | Status | Meaning | `campaign resume` |
 | --- | --- | --- |
-| `no_questions` | Matching LKM graph explicitly returned an empty question array | Reuses the valid empty snapshot |
-| `discovery_failed` | Nonzero code (including 7002), timeout, malformed/missing graph, missing question array or unmatched DOI | Retries the lookup |
+| `no_questions` | Matching LKM graph explicitly returned an empty question array; this includes strictly validated 290013 responses with the exact DOI | Reuses the valid empty snapshot |
+| `source_unavailable` | DOI lookup returned 290011 and one title-to-exact-DOI-to-paper-ID recovery did not succeed | Reuses the terminal unavailable outcome; does not retry indefinitely |
+| `discovery_failed` | Nonzero code other than the classified cases above (including 7002), timeout, malformed/missing graph, missing question array or unmatched DOI | Retries the lookup |
 | `candidate_failed` | Some candidates failed Research/Review, deduplication or compilation | Reuses successful stage artifacts and retries failed work |
 | `completed` | Every returned candidate reached accepted, duplicate or rejected outcome | Reuses the paper outcome |
 
@@ -137,6 +141,9 @@ Rejected candidates are distinct from empty discovery. A completed paper may
 therefore have zero compiled repositories even though discovery returned candidates.
 `partial_failed` is the campaign status when any paper remains failed.
 Unexpected scheduler/index errors fail the run visibly, rather than marking success.
+HTTP 429 outcomes are held until the initial paper round has finished and are
+then retried once. A second 429 remains an auditable `discovery_failed` result
+for a later operator-controlled resume; it is not retried in a tight loop.
 
 Failed raw responses are preserved per attempt (`graph-0001.json`, etc.) where
 the server returned a JSON body. Every lookup also retains `attempt-*.json`,

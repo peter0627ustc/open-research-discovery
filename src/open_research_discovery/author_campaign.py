@@ -14,9 +14,14 @@ from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 
 from .common import dump_json_atomic, load_yaml, utc_now
 from .lkm import LKMResponseError, extract_paper_open_questions
+
+
+class SourceUnavailableError(RuntimeError):
+    """The requested DOI could not be recovered from LKM by exact identity."""
 
 
 def normalize_doi(value: str) -> str:
@@ -138,9 +143,36 @@ def build_author_config(
 
 def records_from_graph(payload: dict[str, Any], task: dict[str, Any], graph: str) -> list[dict[str, Any]]:
     """Fail closed on missing/mismatched graphs; explicit [] alone means no questions."""
-    # Validate the service envelope before inspecting its paper identity.
-    extract_paper_open_questions(payload)
     doi = normalize_doi(task["seed_papers"][0]["doi"])
+    # LKM code 290013 is a special no-question response: unlike a generic
+    # failure it contains the requested paper and an explicit empty
+    # open_questions array. Accept only that exact, auditable shape.
+    if payload.get("code") == 290013:
+        data = payload.get("data")
+        papers = data.get("papers") if isinstance(data, dict) else None
+        if not isinstance(papers, list):
+            raise LKMResponseError("LKM 290013 response is missing data.papers[]")
+        matched = []
+        for entry in papers:
+            paper = entry.get("paper") if isinstance(entry, dict) else None
+            returned_doi = str((paper or {}).get("doi") or "")
+            try:
+                same_doi = normalize_doi(returned_doi) == doi
+            except ValueError:
+                same_doi = False
+            if same_doi:
+                matched.append(entry)
+        if not matched or any(
+            not isinstance(entry.get("open_questions"), list)
+            or entry.get("open_questions")
+            for entry in matched
+        ):
+            raise LKMResponseError(
+                "LKM 290013 is not an exact-DOI explicit-empty response"
+            )
+        return []
+    # Validate the ordinary service envelope before inspecting paper identity.
+    extract_paper_open_questions(payload)
     matched = []
     for entry in payload["data"]["papers"]:
         returned_doi = str((entry.get("paper") or {}).get("doi") or "")
@@ -207,21 +239,98 @@ class AuthorCampaign:
             raw = self.p.run_dir / stored["graph"]
             if raw.exists() and _hash(_read(raw)) == stored["graph_sha256"]:
                 return records_from_graph(_read(raw), task, stored["graph"])
-        attempt = len(list(folder.glob("attempt-*.json"))) + 1
+        attempts = sorted(folder.glob("attempt-*.json"))
+        prior_payload = None
+        prior_graph = None
+        if attempts:
+            previous = _read(attempts[-1])
+            previous_graph = self.p.run_dir / str(previous.get("graph") or "")
+            if previous.get("status") == "failed" and previous_graph.is_file():
+                value = _read(previous_graph)
+                if value.get("code") == 290013:
+                    records = records_from_graph(
+                        value, task, str(previous_graph.relative_to(self.p.run_dir))
+                    )
+                    dump_json_atomic(cache, {
+                        "graph": str(previous_graph.relative_to(self.p.run_dir)),
+                        "graph_sha256": _hash(value),
+                        "records": records,
+                        "reclassified_at": utc_now(),
+                        "reclassified_from": previous["graph"],
+                    })
+                    return records
+                if value.get("code") == 290011:
+                    # The failed DOI response is already preserved. Reuse it
+                    # and spend the one recovery attempt on title lookup.
+                    prior_payload = value
+                    prior_graph = str(previous_graph.relative_to(self.p.run_dir))
+        attempt = len(attempts) + 1
         raw = folder / f"graph-{attempt:04d}.json"
-        graph = str(raw.relative_to(self.p.run_dir))
+        graph = prior_graph or str(raw.relative_to(self.p.run_dir))
         attempt_path = folder / f"attempt-{attempt:04d}.json"
         event = {"doi": normalize_doi(task["seed_papers"][0]["doi"]),
                  "started_at": utc_now(), "status": "running", "graph": graph}
+        if prior_payload is not None:
+            event["reused_failed_doi_graph"] = True
         dump_json_atomic(attempt_path, event)
         try:
-            with self.p._networked_semaphore:
-                self.p.paper_collector(
-                    doi=event["doi"], raw_out=raw,
-                    out=folder / f"extracted-{attempt:04d}.json",
-                    timeout=self.p.config["limits"]["lkm_timeout_seconds"],
+            def collect(path: Path, **identifier: str) -> dict[str, Any]:
+                try:
+                    with self.p._networked_semaphore:
+                        self.p.paper_collector(
+                            **identifier, raw_out=path,
+                            out=folder / f"extracted-{attempt:04d}.json",
+                            timeout=self.p.config["limits"]["lkm_timeout_seconds"],
+                        )
+                except LKMResponseError:
+                    # The collector preserves nonzero LKM envelopes before
+                    # raising. Interpret only known codes below.
+                    if not path.is_file():
+                        raise
+                return _read(path)
+
+            payload = prior_payload or collect(raw, doi=event["doi"])
+            if payload.get("code") == 290011:
+                title = str(task["seed_papers"][0].get("title") or "").strip()
+                if not title or title.casefold() == event["doi"].casefold():
+                    raise SourceUnavailableError(
+                        "LKM DOI lookup returned 290011 and no usable title fallback exists"
+                    )
+                title_raw = folder / f"title-lookup-{attempt:04d}.json"
+                event["title_lookup_graph"] = str(title_raw.relative_to(self.p.run_dir))
+                title_payload = collect(title_raw, title=title)
+                papers = (
+                    title_payload.get("data", {}).get("papers")
+                    if isinstance(title_payload.get("data"), dict) else None
                 )
-            payload = _read(raw)
+                matches = []
+                if isinstance(papers, list):
+                    for entry in papers:
+                        paper = entry.get("paper") if isinstance(entry, dict) else None
+                        returned_doi = str((paper or {}).get("doi") or "")
+                        try:
+                            same_doi = normalize_doi(returned_doi) == event["doi"]
+                        except ValueError:
+                            same_doi = False
+                        paper_id = str((paper or {}).get("id") or "").strip()
+                        if same_doi and paper_id:
+                            matches.append(paper_id)
+                if not matches:
+                    raise SourceUnavailableError(
+                        "LKM DOI lookup returned 290011 and title lookup found no exact-DOI paper"
+                    )
+                paper_id = sorted(set(matches))[0]
+                paper_raw = folder / f"paper-id-{attempt:04d}.json"
+                event.update(
+                    fallback_paper_id=paper_id,
+                    paper_id_graph=str(paper_raw.relative_to(self.p.run_dir)),
+                )
+                payload = collect(paper_raw, paper_id=paper_id)
+                graph = event["paper_id_graph"]
+                if payload.get("code") == 290011:
+                    raise SourceUnavailableError(
+                        "LKM paper-id lookup remained unavailable after exact-DOI title recovery"
+                    )
             records = records_from_graph(payload, task, graph)
         except Exception as error:
             dump_json_atomic(attempt_path, {**event, "status": "failed", "finished_at": utc_now(),
@@ -335,7 +444,9 @@ class AuthorCampaign:
         try:
             with self.lock:
                 cached = self.index["papers"].get(doi)
-                if cached and cached["status"] in {"completed", "no_questions"}:
+                if cached and cached["status"] in {
+                    "completed", "no_questions", "source_unavailable"
+                }:
                     # Shared/coauthored papers are retrieved once, also across
                     # later campaigns using the same solution root.
                     for key in cached["problem_ids"]:
@@ -375,6 +486,12 @@ class AuthorCampaign:
                     self.p.ledger.update_candidate(cid, {"status": "compile_failed", "error": str(error)})
             result.update(status="completed" if not failures else "candidate_failed", failed_candidates=failures,
                           rejected_candidates=rejected, problem_ids=sorted(set(result["problem_ids"])))
+        except SourceUnavailableError as error:
+            result.update(
+                status="source_unavailable",
+                error_class=type(error).__name__,
+                error=str(error),
+            )
         except Exception as error:
             result.update(status=f"{phase}_failed", error_class=type(error).__name__, error=str(error))
         finally:
@@ -385,7 +502,7 @@ class AuthorCampaign:
                 self.save()
                 dump_json_atomic(self.p.run_dir / "papers" / task["id"] / "status.json", result)
 
-    def schedule(self) -> None:
+    def schedule(self, selected_tasks: list[dict[str, Any]] | None = None) -> None:
         """Keep a bounded set of primary authors active until their queues drain.
 
         A paper owns up to candidate_workers_per_topic agent lanes until it
@@ -399,7 +516,7 @@ class AuthorCampaign:
         if "author_workers" in agents:
             order = {author["id"]: i for i, author in enumerate(self.p.config["authors"])}
             queues: dict[str, deque] = {}
-            for task in self.p.config["topics"]:
+            for task in selected_tasks or self.p.config["topics"]:
                 owner = min(task["author_ids"], key=order.__getitem__)
                 queues.setdefault(owner, deque()).append(task)
             remaining = deque(sorted(queues, key=order.__getitem__))
@@ -433,7 +550,7 @@ class AuthorCampaign:
                             active[pending.pop(future)] -= 1
                             future.result()
             return
-        tasks = iter(self.p.config["topics"])
+        tasks = iter(selected_tasks or self.p.config["topics"])
         # Bound queued work as well as active work for 50k+ literature lists.
         with ThreadPoolExecutor(max_workers=self.p.topic_workers) as executor:
             pending = set()
@@ -453,6 +570,18 @@ class AuthorCampaign:
         self.p.state.update(status="running", error="")
         self.p.ledger.save()
         self.schedule()
+        # Retry transport throttling only after the entire initial round. One
+        # retry per campaign run avoids immediately amplifying LKM overload.
+        by_id = {task["id"]: task for task in self.p.config["topics"]}
+        rate_limited = [
+            by_id[task_id]
+            for task_id, row in self.outcomes.items()
+            if row.get("status") == "discovery_failed"
+            and row.get("error_class") == HTTPError.__name__
+            and "429" in str(row.get("error") or "")
+        ]
+        if rate_limited:
+            self.schedule(rate_limited)
         counts = Counter(row["status"] for row in self.outcomes.values())
         accepted = [entry["problem_id"] for entry in self.p.state["candidates"].values()
                     if entry.get("status") == "accepted"]
