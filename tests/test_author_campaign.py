@@ -365,7 +365,14 @@ def test_end_to_end_same_author_dedup_resume_and_increment(tmp_path):
     assert len(entry["members"]) == 2
     assert entry["problem"]["problem_id"] == result["canonical_problem_ids"][0]
     assert entry["author_ids"] == ["P1", "P2"]
-    assert (Path(entry["compiled"]["solution_repo"]) / "README.md").is_file()
+    repo = Path(entry["compiled"]["solution_repo"])
+    assert (repo / "README.md").is_file()
+    metadata = json.loads((repo / "metadata/problem.json").read_text())
+    assert metadata == {
+        "solution_difficulty": entry["problem"]["solution_difficulty"],
+        "scientific_significance": entry["problem"]["scientific_significance"],
+    }
+    assert not (repo / "docs").exists()
     with pytest.raises(CampaignError, match="dedup"):
         pipeline.compile_pending()
     count = len(runner.calls)

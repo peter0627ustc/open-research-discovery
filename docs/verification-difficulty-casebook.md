@@ -4,7 +4,8 @@
 reviewer after every mechanically delegable check has been delegated. It does
 not measure the difficulty of finding the answer.
 
-Score the cheapest sound verification path the contract permits — not the
+Score the cheapest sound verification path supported by the stated problem
+and inspected literature — not the
 solver's path, and not the scientific difficulty of discovering the answer.
 
 ## Verification modes
@@ -33,8 +34,8 @@ The score is an integer from 0 to 10:
 
 - **0 — no residual.** Every load-bearing claim is discharged by M, R, or C,
   and specification fidelity is trivial: the formal statement, protocol, or
-  target is pinned by the contract or directly comparable to the problem
-  statement. Score 0 does not require that CI exists; manual execution of a
+  target is fixed by the problem itself or directly comparable to its
+  statement. Score 0 does not require automation; manual execution of a
   fixed procedure stays 0.
 - **1–3 — light residual.** A few independent, local, standard reasoning
   units, each checkable at a glance.
@@ -53,26 +54,24 @@ Specification fidelity — whether a formal statement faithfully encodes the
 original problem — is the easiest place to hide burden. Do not move burden
 into an unverified specification gap to lower the score.
 
-A Lean proof scores 0 only when the contract pins the formal statement, or
+A Lean proof scores 0 only when the problem fixes the formal statement, or
 the statement is directly comparable to the problem statement. Otherwise
 checking the statement against the informal problem is itself derivation
 review and counts as residual work, typically 1–3.
 
-## CI: the operational layer
+## Estimate from the stated problem
 
-CI is delegation institutionalized: it automates the delegable checks. The
-score above is structural — a property of the contract — and CI cannot lower
-it. CI status tracks how much of the delegable checking has been automated so
-far, and improves over time.
+Assess a hypothetical completed answer using the problem description and
+literature already inspected. Do not solve the problem, implement a checker,
+or investigate a separate checking workflow. A mechanical route must be a
+real recomputation, known terminating procedure with concrete inputs, or replay
+of a hypothetical submitted artifact; calling the scientific target a
+decision procedure is not enough.
 
-The reviewer's actual burden in practice is the structural residual plus the
-manual execution of delegable checks not yet automated. CI must run the
-acceptance condition itself, never a proxy metric. Auditing a CI
-configuration is a one-time fixed cost, done when the problem enters the
-repository; it is not part of the per-review difficulty score.
-
-Only better contract design — required certificates, pinned formal
-statements — and better problem decomposition lower the structural score.
+Do not invent additional certificate, formal-proof, benchmark, or output
+requirements to lower the score. Use only routes supported by the scientific
+target, and include any remaining statement-fidelity or coverage judgments in
+the rationale. Automating a fixed check does not change the residual score.
 
 ## Score-0 examples
 
@@ -92,11 +91,11 @@ specification fidelity:
 - an algorithm required to meet a fixed output or performance target that the
   submitted implementation and measurements directly test;
 - a mathematical proof that the problem explicitly requires as Lean, Coq, or
-  Isabelle code, with the statement pinned by the contract and accepted by
+  Isabelle code, with the statement fixed by the problem and accepted by
   the pinned kernel.
 
 Score 0 does not mean that every check must be mechanical, cheap, or already
-implemented in CI. It means that no derivation review or holistic judgment is
+automated. It means that no derivation review or holistic judgment is
 left after the delegable checks.
 
 ## Numerically verified exact solutions
@@ -117,10 +116,10 @@ coverage judgments can still score 0.
 
 ## Boundary examples
 
-| Problem contract | Score | Reason |
+| Stated problem | Score | Reason |
 |---|---:|---|
 | Prove theorem T in ordinary mathematical prose | 10 | The essential claim cannot be decomposed into independently checkable units |
-| Submit a Lean 4 proof of theorem T, statement pinned by the contract | 0 | Kernel acceptance is M and specification fidelity is trivial |
+| Submit a Lean 4 proof of theorem T, statement fixed by the problem | 0 | Kernel acceptance is M and specification fidelity is trivial |
 | Find an exact global optimum, with no certificate format | 7 | Global optimality needs a substantial derivation review |
 | Find the optimum and submit the requested replayable exact upper-bound certificate | 0 | Matching lower and upper bounds are certificate and replay checks |
 | Give one finite counterexample | 0 | The witness itself settles the universal finite claim |
@@ -137,32 +136,25 @@ coverage judgments can still score 0.
 
 ## Pipeline rule
 
-The Research audit records, per Problem Schema v1.0:
+Research and Reviewer share one prompt, `_VERIFICATION_DIFFICULTY_PROMPT` in
+`src/open_research_discovery/campaign.py`, and one authoritative rubric,
+`VERIFICATION_DIFFICULTY_RUBRIC` in `src/open_research_discovery/ranking.py`.
+This casebook illustrates that rubric; it does not add an output requirement.
 
-- `verification_difficulty` — one 0-10 `score` for the whole problem plus its
-  `rationale`;
-- `verification_contract` — keyed by answer type, each entry with the reviewer
-  `contract` and an optional mechanically executable `ci_contract`;
-- `scientific_significance.affected_field` — a high/medium/low `level` with a
-  specific `description`;
-- `solution_difficulty` — plausible solving difficulties, without scores.
+The only verification output is optional internal `verification_difficulty`:
+one 0-10 `score` for the whole problem and a short `rationale` explaining the
+mechanically checkable parts and residual independent reasoning or scientific
+judgment. Omit the field or use null when the available evidence cannot support
+an honest estimate. Missing values are unassessed, never a fabricated score.
+Do not generate acceptance contracts, answer-type lists, CI plans, or
+verification documents. Historical contract fields remain readable for
+compatibility only.
 
-No maximum verification-difficulty threshold is ever applied. The 0-10 score
-remains visible as reviewer-workload metadata. Publication instead requires an
-accepted Problem Reviewer verdict on a currently open problem. A high-score
-problem may be published; a problem whose contract the reviewer cannot accept
-is archived in the run directory.
-
-The Research Agent scores the surviving open core after the literature
-audit. The Problem Reviewer checks that the score is supported and that any
-claimed CI is operational. Current-open status and affected-field significance
-lead ranking; verification difficulty is secondary and never substitutes for
-scientific value.
-
-The score and CI are two layers: the score is the structural residual, fixed
-by the contract; each `ci_contract` records the mechanically executable part
-of the corresponding answer type's contract and may improve without the score
-changing.
+Missing or high verification difficulty is not a rejection or publication
+gate. Research estimates the surviving open core after its literature audit;
+Reviewer may retain or revise a supported estimate. Current-open status and
+affected-field significance lead ranking; verification difficulty is secondary
+and never substitutes for scientific value.
 
 The executable examples live in
 `tests/fixtures/verification_difficulty_cases.json`.

@@ -2,10 +2,13 @@ import json
 import threading
 from pathlib import Path
 
+import pytest
+
 from open_research_discovery.common import dump_yaml, load_yaml
 from open_research_discovery.pool import (
     dedup_candidates,
     normalize_text,
+    pool_statistics,
     problem_to_record,
     statement_fingerprint,
     validate_pool,
@@ -115,6 +118,58 @@ def test_problem_record_projects_v1_manifest_fields() -> None:
     )
     assert record["snapshot"] == "problems/ORP-0001.yaml"
     assert record["local_repo"] == "ORP-0001-audited-example"
+
+
+@pytest.mark.parametrize("null_fields", [False, True])
+def test_problem_record_preserves_unassessed_difficulty(null_fields: bool) -> None:
+    problem = load_yaml(REPOSITORY_ROOT / "tests/fixtures/problem-draft.yaml")
+    problem["problem_id"] = "ORP-0001"
+    for field in ("verification_contract", "verification_difficulty"):
+        if null_fields:
+            problem[field] = None
+        else:
+            problem.pop(field, None)
+    result = problem_to_record(problem, "ORP-0001-draft")
+    assert result["verification_difficulty"] is None
+    assert result["verification_difficulty_rationale"] == ""
+    assert result["answer_types"] == []
+    assert result["has_ci"] is False
+
+
+def test_pool_statistics_counts_unassessed_difficulty_without_a_fake_score() -> None:
+    stats = pool_statistics([
+        {"verification_difficulty": 3},
+        {"verification_difficulty": None},
+        {},
+    ])
+    assert stats["counts"]["verification_difficulty"] == {3: 1, "unassessed": 2}
+    assert json.loads(json.dumps(stats))["counts"]["verification_difficulty"] == {
+        "3": 1, "unassessed": 2,
+    }
+
+
+def test_sync_pool_preserves_existing_optional_unassessed_difficulty(
+    tmp_path: Path,
+) -> None:
+    out = _synced_pool(tmp_path)
+    catalog_path = out / "catalog.jsonl"
+    existing = json.loads(catalog_path.read_text(encoding="utf-8").strip())
+    existing.pop("verification_difficulty")
+    catalog_path.write_text(json.dumps(existing) + "\n", encoding="utf-8")
+    input_root = tmp_path / "empty-input"
+    input_root.mkdir()
+
+    result = sync_pool(
+        input_root, out, problem_schema=PROBLEM_SCHEMA, preserve_existing=True,
+    )
+
+    assert result["synced"] == 1
+    restored = json.loads(catalog_path.read_text(encoding="utf-8").strip())
+    assert restored["verification_difficulty"] is None
+    assert load_yaml(out / "stats.yaml")["counts"]["verification_difficulty"] == {
+        "unassessed": 1,
+    }
+    assert validate_pool(out) == []
 
 
 def test_sync_pool_serializes_concurrent_catalog_updates(

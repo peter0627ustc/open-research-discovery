@@ -1,24 +1,34 @@
 # Problem-quality benchmark
 
 The problem-quality benchmark measures the *end-to-end quality of a published
-problem repository*: is the final artifact — the problem manifest plus its
-README projection — actually trustworthy?
+problem repository*: is the complete solver-visible README actually
+trustworthy, given the available citation evidence?
 
 Use it only as an explicit audit workflow. Ordinary problem generation runs
 `discovery campaign`.
 
 ## Evaluation target
 
-The evaluation object is the **problem.schema manifest** (`problem.yaml`),
-which is the content authority. The README is a deterministic projection of
-the manifest and is audited only as an attachment. Each case is scored on
+The evaluation object is the **solver-visible README**. Read its statement,
+background, definitions, and current-progress context together, distinguishing
+background results and intermediate milestones from the final objective.
+The internal problem.schema record is retained for provenance and mechanical
+validation, but only its references and previous-progress notes are passed to
+the reviewer as supporting audit context. Neither those notes nor frozen
+evidence may repair missing public definitions, assumptions, quantifiers, or
+completion conditions, or impose additional requirements. Internal audit
+assertions are not proof of source support; bibliographic metadata alone does
+not establish a paper's formulation or its current solution status. If the
+README is unavailable, report missing public input rather than reconstructing
+it from the internal record. Each case is scored on
 five dimensions, each an integer from 0 (fundamentally broken) to 3 (sound),
 with concrete issues (`type`/`severity`/`detail`) and an overall grade:
 
 1. **citation_accuracy** — cited works exist and are paraphrased accurately
    when cross-checked against the frozen citation metadata.
-2. **openness_argument** — the openness conclusion and the surviving open
-   core are genuinely supported by the cited audit evidence.
+2. **openness_argument** — public openness claims and the current-progress
+   narrative are supported by available cited evidence, not merely asserted
+   or supplied by hidden audit notes.
 3. **scope_fidelity** — the statement does not silently narrow or drift, its
    requested results form a coherent scientific objective, and any
    named-problem or lineage narrative in `background` and `previous_progress`
@@ -26,13 +36,19 @@ with concrete issues (`type`/`severity`/`detail`) and an overall grade:
    not a defect by themselves; relative domain language is acceptable when
    sources, context, or established field conventions make it sufficiently
    determinate for a qualified expert.
-4. **verification_executability** — a qualified domain expert can apply the
-   verification standard to the complete stated objective without inventing
+4. **verification_executability** — a qualified domain expert can judge a
+   hypothetical completed answer against the complete public objective without inventing
    scope, circularly assuming the conclusion, ignoring an unrelated requested
    result, or accepting a proxy or materially narrower target. Holistic proof
-   review, scientific judgment, and independent replication count as
-   executable verification; absent or partial CI is not a defect when that
-   expert-review procedure is clear.
+   review, scientific judgment, and independent replication are valid forms
+   of assessment. No acceptance contracts, answer-type lists, prescribed
+   checking procedures, CI, or verification documents are required. Their
+   absence and a missing or high internal verification-difficulty score are
+   not quality defects. Conditions actually written in the README remain
+   public requirements, but hidden conditions cannot repair or add to them.
+   Evaluation does not solve the problem or design a checker. The existing
+   dimension name and 0–3 scale remain unchanged for JSON compatibility;
+   this is not the internal 0–10 verification-difficulty estimate.
 5. **evidence_relevance** — each evidence item genuinely bears on this
    problem; Direct/Adjacent-style framing is not inflated.
 
@@ -76,7 +92,7 @@ status; only `not_found` or conflicting fetched metadata is citation evidence.
 
 Each case's `input.json` contains the manifest, the README markdown (when
 locatable — from the campaign-recorded problem repository for `--run-dir`),
-the frozen evidence, provenance, and the scoring rubric. It contains no
+the frozen evidence, provenance, and a build-time scoring-rubric snapshot. It contains no
 pipeline verdicts beyond the schema-validity flag, and that flag is withheld
 from the evaluated agent.
 
@@ -95,10 +111,16 @@ uv run discovery quality evaluate quality-v1 \
 
 `evaluate` runs one ephemeral headless reviewer per case with `read-only`
 sandboxing and `network_access=false`. The prompt
-contains only the manifest, the README, the frozen evidence, and the rubric —
+contains only the README, supporting references and previous-progress notes,
+the frozen evidence, and the current canonical rubric —
 no pipeline context, so the reviewer cannot self-confirm the pipeline's own
 judgments. Citation cross-checks must rely exclusively on `frozen_evidence`.
-`--resume` reuses schema-valid predictions and retries only missing cases.
+Legacy datasets remain readable, but their stored rubric cannot reintroduce
+superseded contract-based requirements: evaluation uses the current
+`QUALITY_RUBRIC`. `--resume` reuses a schema-valid prediction only when its
+recorded input, evaluation-prompt, and output-schema hashes still match.
+Predictions produced before this policy change (or without those hashes) are
+re-evaluated; the frozen dataset and existing expert gold labels are not rewritten.
 
 ## Scoring (deterministic, no agent)
 
@@ -122,7 +144,7 @@ predictions:
   `not_found` are critical defects and feed the hallucination rate.
 - **fetch errors** — identifiers whose frozen status is `error` are recorded
   as minor `evidence_fetch_error` issues.
-- **README contract** — the README projection is checked with the same
+- **README layout** — the public README is checked with the same
   `validate_problem_readme` rules used for published repositories; a case
   without a locatable README is flagged `missing_readme`.
 - **cross-case duplicates** — problem statements with normalized token

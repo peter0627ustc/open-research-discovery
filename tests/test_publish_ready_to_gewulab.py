@@ -34,26 +34,6 @@ Prove or refute the statement.
 
 - Status: `{status}`
 
-## Scientific Significance
-
-High.
-
-## Answer Types
-
-- proof
-
-## Verification Standard
-
-### proof
-
-Provide a complete proof.
-
-## Suggested CI
-
-### proof
-
-No CI.
-
 ## References
 
 1. A reference.
@@ -66,6 +46,10 @@ def manifest(problem_id: str, status: str = "ready") -> dict:
         "status": status,
         "title": "A precise open problem",
         "problem_statement": "Prove or refute the statement for every input.",
+        "solution_difficulty": ["A technical obstacle."],
+        "scientific_significance": {
+            "affected_field": {"level": "high", "description": "An important advance."}
+        },
         "verification_contract": {
             "proof": {
                 "contract": "Submit a complete derivation covering every input.",
@@ -135,11 +119,65 @@ def test_canonical_problem_yaml_has_exact_schema() -> None:
     }
 
 
-def test_rubric_includes_contract_ci_and_cross_cutting_checks() -> None:
-    text = publisher.render_evaluation_rubric(manifest("ORP-0001"))
-    assert "Submit a complete derivation" in text
-    assert "Replay the supplied finite checks" in text
-    assert "limitations, uncertainty" in text
+def test_canonical_files_publish_metadata_without_verification_documents(
+    tmp_path: Path,
+) -> None:
+    run = make_candidate(tmp_path)
+    problem, = publisher.discover_ready(run)
+    # Publication no longer depends on verification research output.
+    record = manifest("ORP-0001")
+    del record["verification_contract"]
+    del record["verification_difficulty"]
+    problem.internal_manifest.write_text(yaml.safe_dump(record), encoding="utf-8")
+
+    files = publisher.canonical_files(problem, 123)
+
+    assert set(files) == {
+        Path("README.md"), Path("problem.yaml"), Path("metadata/problem.json")
+    }
+    assert files[Path("README.md")] == readme()
+    assert json.loads(files[Path("metadata/problem.json")]) == {
+        "solution_difficulty": record["solution_difficulty"],
+        "scientific_significance": record["scientific_significance"],
+    }
+    assert "verification_contract" not in files[Path("metadata/problem.json")]
+
+
+def test_canonical_files_publish_verification_difficulty_only_in_metadata(
+    tmp_path: Path,
+) -> None:
+    run = make_candidate(tmp_path)
+    problem, = publisher.discover_ready(run)
+    record = manifest("ORP-0001")
+
+    files = publisher.canonical_files(problem, 123)
+
+    assert json.loads(files[Path("metadata/problem.json")]) == {
+        "solution_difficulty": record["solution_difficulty"],
+        "scientific_significance": record["scientific_significance"],
+        "verification_difficulty": record["verification_difficulty"],
+    }
+    assert files[Path("README.md")] == readme()
+    assert record["verification_difficulty"]["rationale"] not in files[Path("README.md")]
+    assert "verification_contract" not in files[Path("metadata/problem.json")]
+    assert set(files) == {
+        Path("README.md"), Path("problem.yaml"), Path("metadata/problem.json")
+    }
+
+
+def test_prepare_repository_commits_metadata_and_no_verification_docs(
+    tmp_path: Path,
+) -> None:
+    run = make_candidate(tmp_path)
+    problem, = publisher.discover_ready(run)
+    publisher._git(problem.repo_dir, "init", "-b", "main")
+
+    publisher.prepare_repository(problem, 123)
+
+    tracked = publisher._git(problem.repo_dir, "ls-files").stdout.splitlines()
+    assert tracked == ["README.md", "metadata/problem.json", "problem.yaml"]
+    assert not (problem.repo_dir / "docs").exists()
+    assert publisher._git(problem.repo_dir, "status", "--porcelain").stdout == ""
 
 
 def test_math_expectations_count_inline_display_and_fenced() -> None:

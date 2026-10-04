@@ -18,28 +18,10 @@
     "problem_statement",
     "scientific_significance",
     "solution_difficulty",
-    "verification_contract",
-    "verification_difficulty",
     "status",
     "domain",
     "topic_id",
     "repository"
-  ],
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "subproblem_ids": {"minItems": 1}
-        },
-        "required": ["subproblem_ids"]
-      },
-      "else": {
-        "properties": {
-          "verification_contract": {"type": "object", "minProperties": 1},
-          "verification_difficulty": {"type": "object"}
-        }
-      }
-    }
   ],
   "properties": {
     "schema_version": {
@@ -115,7 +97,7 @@
       "items": {"type": "string", "minLength": 1}
     },
     "verification_contract": {
-      "description": "Acceptance contracts keyed by answer type; the keys are the admissible answer types, so there is no separate expected-answer-type field. Null only when a parent problem has delegated solving and acceptance to its subproblems.",
+      "description": "Optional legacy acceptance-contract field retained for reading historical records. New discovery research does not generate this field or CI.",
       "type": ["object", "null"],
       "minProperties": 1,
       "additionalProperties": {
@@ -136,7 +118,7 @@
       }
     },
     "verification_difficulty": {
-      "description": "Overall acceptance difficulty for the whole problem (not per answer type): the residual Agent or human reviewer judgment after every mechanically checkable part is excluded. Not a publication threshold. Null only for a parent problem that delegated to subproblems.",
+      "description": "Optional internal 0-10 estimate of residual independent-review burden for a hypothetical completed answer to the stated problem, excluding sound mechanical checks. No acceptance contract or CI is needed. Omit or use null when unassessed; not a publication threshold.",
       "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["score", "rationale"],

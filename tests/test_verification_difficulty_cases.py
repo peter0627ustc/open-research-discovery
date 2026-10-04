@@ -132,10 +132,16 @@ def test_natural_language_proof_is_ten_and_lean_is_zero() -> None:
     assert by_id["requested-lean-proof"]["expected_verification_difficulty"] == 0
 
 
-def test_zero_definition_does_not_require_ci() -> None:
-    assert "Score 0 does not require that CI exists" in (
+def test_zero_definition_does_not_require_automation() -> None:
+    assert "Score 0 does not require automation" in (
         VERIFICATION_DIFFICULTY_RUBRIC
     )
+
+
+def test_rubric_does_not_depend_on_an_acceptance_contract_or_ci() -> None:
+    assert "contract" not in VERIFICATION_DIFFICULTY_RUBRIC.lower()
+    assert "CI" not in VERIFICATION_DIFFICULTY_RUBRIC
+    assert "stated problem" in VERIFICATION_DIFFICULTY_RUBRIC
 
 
 def test_holistic_and_nonexistence_residual_scores() -> None:

@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     quality = root.add_parser(
         "quality",
-        help="problem-quality benchmark over published problem manifests",
+        help="problem-quality benchmark over solver-visible problem READMEs",
     )
     quality_actions = quality.add_subparsers(dest="action", required=True)
     q_build = quality_actions.add_parser("build")

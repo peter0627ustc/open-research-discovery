@@ -38,15 +38,13 @@ import urllib.request
 
 import yaml
 
+from open_research_discovery.problem_repo import render_problem_metadata
+
 
 CANONICAL_SECTIONS = (
     "Background",
     "Problem Statement",
     "Current Progress",
-    "Scientific Significance",
-    "Answer Types",
-    "Verification Standard",
-    "Suggested CI",
     "References",
 )
 SECRET_PATTERNS = (
@@ -245,103 +243,6 @@ def render_problem_yaml(owner_user_id: int) -> str:
     )
 
 
-def _clean_public_text(value: Any, fallback: str) -> str:
-    text = str(value or "").strip()
-    return text if text else fallback
-
-
-def render_evaluation_rubric(manifest: dict[str, Any]) -> str:
-    problem_id = _clean_public_text(manifest.get("problem_id"), "unknown")
-    title = _clean_public_text(manifest.get("title"), "Open Research Problem")
-    statement = _clean_public_text(
-        manifest.get("problem_statement"),
-        "Refer to README.md for the complete problem statement.",
-    )
-    contract = manifest.get("verification_contract") or {}
-    if not isinstance(contract, dict) or not contract:
-        raise PublishError(f"{problem_id} has no verification_contract")
-    difficulty = manifest.get("verification_difficulty") or {}
-
-    lines = [
-        "# Evaluation Rubric",
-        "",
-        "## Scope",
-        "",
-        f"This rubric evaluates a Solution to `{problem_id}`: **{title}**.",
-        "The Solution must answer the full problem in `README.md`; a proxy, "
-        "benchmark-only result, or silently narrowed special case does not pass.",
-        "",
-        "## Required output",
-        "",
-        statement,
-        "",
-        "The submission must be self-contained, identify its answer type, and "
-        "provide the derivation, computation, experiment, dataset, or other "
-        "durable evidence required by the applicable criterion below.",
-        "",
-        "## Acceptance criteria by answer type",
-        "",
-    ]
-    for answer_type, entry_value in contract.items():
-        entry = entry_value if isinstance(entry_value, dict) else {}
-        lines.extend(
-            [
-                f"### {answer_type}",
-                "",
-                _clean_public_text(
-                    entry.get("contract"),
-                    "No complete acceptance contract was supplied; manual review is required.",
-                ),
-                "",
-                "#### Reproducibility check",
-                "",
-                _clean_public_text(
-                    entry.get("ci_contract"),
-                    "No mechanical CI is prescribed. The reviewer must reproduce "
-                    "or independently inspect all load-bearing evidence.",
-                ),
-                "",
-            ]
-        )
-
-    score = difficulty.get("score")
-    rationale = _clean_public_text(
-        difficulty.get("rationale"),
-        "The independent-review burden was not separately described.",
-    )
-    lines.extend(
-        [
-            "## Cross-cutting checks",
-            "",
-            "A Solution passes only if all applicable checks below pass:",
-            "",
-            "- every required output in the Problem is present;",
-            "- assumptions, definitions, units, parameter ranges, and tolerances "
-            "match the Problem;",
-            "- material claims are linked to inspectable evidence and reproducible "
-            "procedures;",
-            "- stochastic work records seeds, repetition policy, and statistical "
-            "criteria when relevant;",
-            "- numerical work records units, tolerances, and sensitivity or error "
-            "analysis when relevant;",
-            "- the Solution reports limitations, uncertainty, and at least one "
-            "relevant boundary or failure mode;",
-            "- the result is not already implied by a cited prior result unless the "
-            "submission clearly establishes a stronger result;",
-            "- all referenced artifacts exist at stable relative paths and contain "
-            "no credentials, private prompts, or hidden transcripts.",
-            "",
-            "## Independent review burden",
-            "",
-            f"Recorded verification difficulty: `{score}/10`.",
-            "",
-            rationale,
-            "",
-        ]
-    )
-    return "\n".join(lines)
-
-
 def canonical_files(problem: ReadyProblem, owner_user_id: int) -> dict[Path, str]:
     manifest = _yaml_load(problem.internal_manifest)
     readme_path = problem.repo_dir / "README.md"
@@ -352,7 +253,7 @@ def canonical_files(problem: ReadyProblem, owner_user_id: int) -> dict[Path, str
     return {
         Path("README.md"): readme,
         Path("problem.yaml"): render_problem_yaml(owner_user_id),
-        Path("docs/evaluation-rubric.md"): render_evaluation_rubric(manifest),
+        Path("metadata/problem.json"): render_problem_metadata(manifest),
     }
 
 
@@ -372,7 +273,7 @@ def prepare_repository(problem: ReadyProblem, owner_user_id: int) -> str:
         if not path.is_file() or path.read_text(encoding="utf-8") != text:
             path.write_text(text, encoding="utf-8")
 
-    _git(problem.repo_dir, "add", "README.md", "problem.yaml", "docs/evaluation-rubric.md")
+    _git(problem.repo_dir, "add", "README.md", "problem.yaml", "metadata/problem.json")
     diff = _git(problem.repo_dir, "diff", "--cached", "--quiet", check=False)
     if diff.returncode == 1:
         _git(

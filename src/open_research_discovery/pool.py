@@ -91,11 +91,11 @@ def problem_to_record(problem: dict[str, Any], repo_name: str) -> dict[str, Any]
         "status": str(problem.get("status") or ""),
         "significance_level": str(affected.get("level") or "unassessed"),
         "significance_description": str(affected.get("description") or ""),
-        "verification_difficulty": int(
-            difficulty.get("score")
+        "verification_difficulty": (
+            int(difficulty["score"])
             if isinstance(difficulty.get("score"), int)
             and not isinstance(difficulty.get("score"), bool)
-            else 10
+            else None
         ),
         "verification_difficulty_rationale": str(difficulty.get("rationale") or ""),
         "answer_types": [str(value) for value in contract],
@@ -207,7 +207,15 @@ def pool_statistics(records: list[dict[str, Any]]) -> dict[str, Any]:
             1 for row in records if str(row.get("status")) in RESOLVED_STATUSES
         ),
         "counts": {
-            field: dict(sorted(Counter(row[field] for row in records).items()))
+            field: dict(
+                sorted(
+                    Counter(
+                        row.get(field) if row.get(field) is not None else "unassessed"
+                        for row in records
+                    ).items(),
+                    key=lambda item: str(item[0]),
+                )
+            )
             for field in fields
         },
     }

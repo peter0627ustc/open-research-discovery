@@ -1,25 +1,26 @@
 ---
 name: rank-open-problems
-description: Review open research problems for scientific significance, source fidelity, accepted answer types, per-type verification contracts, and 0-10 verification difficulty.
+description: Review open research problems for scientific significance, source fidelity, and optional internal verification difficulty in the discovery pipeline.
 ---
 
 # Rank Open Problems
 
-Judge scientific value and the acceptance boundary, not how easy the problem is
-to solve or retrieve.
+Judge scientific value and the clarity of the scientific objective, not how
+easy the problem is to solve or retrieve.
 
 ## Role split
 
-This policy is applied by two stages with different output contracts:
+This policy is applied by stages with different output records:
 
 - **Selection** (production) canonicalizes and *routes*. It reports the
   canonical formulation plus `importance_level` and a free-form `assessment`
   narrative. It does **not** output significance levels, verification
-  contracts, difficulty, or CI — Research produces those from scratch.
-- **Research** produces the full published contract after the later-literature
-  audit: one Problem Schema v1.0 record — significance level and description,
-  per-answer-type verification contracts, difficulty, and CI — plus the
-  `audit_outcome`.
+  contracts, difficulty, or CI.
+- **Research** produces one Problem Schema v1.0 scientific record after the
+  later-literature audit, plus `audit_outcome`. Its internal verification
+  difficulty estimate is optional.
+- **Problem Reviewer** checks the formulation and literature, and may retain
+  or revise a supported internal difficulty estimate.
 
 The decisions below apply to whichever stage produces the corresponding field.
 
@@ -31,35 +32,17 @@ The decisions below apply to whichever stage produces the corresponding field.
    capability, bound, mechanism, experiment, or decision would materially
    change. Also retain the coarse `importance_level` (high/medium/low), which
    is the only importance field Selection reports.
-2. Record every naturally acceptable answer type as a key of
-   `verification_contract`; answer types are descriptive and never gates
-   (Research).
-3. Write each `verification_contract` entry as the exact acceptance condition
-   for that answer type: what is submitted, what the reviewer checks, and what
-   passes (Research). Never invent a proxy benchmark, arbitrary threshold, or
-   favorable finite regime that changes the scientific question. The optional
-   `ci_contract` records the mechanically executable part of that contract, or
-   null when no reasonable automated acceptance exists.
-4. Assign `verification_difficulty.score` from 0 to 10 as residual
-   independent-review burden after mechanical checks, replay, and certificates
-   are delegated, with a `rationale` (Research):
-   - 0: every load-bearing claim is discharged by a pinned mechanical, replay, or
-     certificate check;
-   - 1-3: a few independent local reasoning units remain;
-   - 4-6: connected derivations or substantial specification reconstruction;
-   - 7-9: long, fragile, or novel reasoning chains;
-   - 10: the essential claim cannot be decomposed into independent checks.
-5. Record CI independently (Research). CI may automate delegable
-   checks but never lowers the structural score and never gates a research
-   problem.
-
-An explicit finite counterexample, exact substitution check, finite
-construction, source-faithful code-to-experiment comparison, or contract-pinned
-Lean/Coq/Isabelle proof may score 0 when every load-bearing claim is discharged.
-An ordinary natural-language proof reviewed as one inseparable whole scores 10.
-For a parameter family, one checkable instance is not a family-level answer. For
-an exact finite optimum, a maximizing object supplies only the lower bound unless
-the result also contains independently decisive evidence of global optimality.
+2. Research and Reviewer use the single shared difficulty prompt in
+   `src/open_research_discovery/campaign.py` and
+   `VERIFICATION_DIFFICULTY_RUBRIC` in `src/open_research_discovery/ranking.py`.
+   Estimate residual independent-review burden for a hypothetical completed
+   answer from the stated problem and inspected literature, not solving effort.
+   Return only optional `verification_difficulty` with a 0-10 `score` and a
+   short `rationale`; omit it or use null when unassessed.
+3. Do not generate acceptance contracts, answer-type lists, CI plans, or
+   verification documents. Do not undertake a separate investigation to design
+   checking procedures, add requirements to lower the score, or weaken the
+   scientific question into an easier proxy.
 
 ## Admission and ranking
 
@@ -79,8 +62,8 @@ level; use verification difficulty only as reviewer workload metadata.
   `assessment` (`schemas/stages/selection.schema.json`).
 - Research returns a Problem Schema v1.0 record — title, abstract, background,
   references, previous_progress, problem_statement, scientific_significance,
-  solution_difficulty, verification_contract, verification_difficulty — plus
-  `audit_outcome` (`schemas/problem.schema.json`).
+  solution_difficulty — plus `audit_outcome` and optionally
+  `verification_difficulty` (`schemas/problem.schema.json`).
 
 Use [the casebook](../../../docs/verification-difficulty-casebook.md) for score
 boundary examples. It calibrates reviewer burden; it is not a deterministic

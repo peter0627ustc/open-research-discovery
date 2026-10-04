@@ -215,21 +215,6 @@ def _assessment(candidate_id: str, *, finite: bool) -> dict[str, Any]:
         if finite
         else "Establish or refute the stated critical-coupling interval."
     )
-    answer_types = ["proof", "counterexample"] if finite else [
-        "proof",
-        "certified numerical bound",
-    ]
-    contract = {
-        answer_type: {
-            "contract": (
-                "Accept only after an independent reviewer checks the fixed "
-                "assumptions, replays the decisive calculation, and confirms "
-                "the claimed conclusion."
-            ),
-            "ci_contract": None,
-        }
-        for answer_type in answer_types
-    }
     return {
         "audit_outcome": "open",
         "title": title,
@@ -260,7 +245,6 @@ def _assessment(candidate_id: str, *, finite: bool) -> dict[str, Any]:
         "solution_difficulty": [
             "The finite search space grows combinatorially.",
         ],
-        "verification_contract": contract,
         "verification_difficulty": {
             "score": 10 if finite else 4,
             "rationale": "The score measures residual reviewer burden.",
@@ -708,6 +692,52 @@ def test_missing_review_notes_warns_without_failing(tmp_path: Path) -> None:
     assert not list(pipeline.run_dir.glob("candidates/*/review-memory.md"))
 
 
+@pytest.mark.parametrize("null_difficulty", [False, True])
+def test_topic_campaign_compiles_and_resumes_without_verification_fields(
+    tmp_path: Path, null_difficulty: bool,
+) -> None:
+    class OptionalDifficultyRunner(TopicAgentRunner):
+        def run(self, **kwargs: Any) -> AgentRun:
+            result = super().run(**kwargs)
+            if kwargs["role"] == "research":
+                if null_difficulty:
+                    result.output["verification_difficulty"] = None
+                else:
+                    result.output.pop("verification_difficulty")
+                dump_json(kwargs["output_path"], result.output)
+            return result
+
+    repository_root = Path(__file__).resolve().parents[1]
+    runner = OptionalDifficultyRunner()
+    pipeline = _start_pipeline(
+        _config(tmp_path), repository_root=repository_root,
+        run_id="optional-verification", agent_runner=runner,
+    )
+    summary = pipeline.run()
+    assert len(summary["accepted_problem_ids"]) == 2
+    for manifest in pipeline.run_dir.glob("candidates/*/problem.yaml"):
+        problem = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        assert problem["status"] == "ready"
+        assert problem.get("verification_difficulty") is None
+        assert "verification_contract" not in problem
+        assert validate_problem(manifest, repository_root / "schemas/problem.schema.json") == []
+        memory = (manifest.parent / "memory.md").read_text(encoding="utf-8")
+        assert "- Verification difficulty: unassessed" in memory
+        assert "- Answer types:" not in memory
+    ranking = json.loads((pipeline.run_dir / "ranking.json").read_text(encoding="utf-8"))["ranking"]
+    assert all(item["verification_difficulty"] is None for item in ranking)
+    assert all("verification difficulty unassessed" in item["ranking_rationale"] for item in ranking)
+    for item in summary["solution_repositories"]:
+        repo = Path(item["solution_repo"])
+        assert validate_problem_readme(repo / "README.md") == []
+        assert not (repo / "docs").exists()
+        metadata = json.loads((repo / "metadata/problem.json").read_text(encoding="utf-8"))
+        assert set(metadata) == {"solution_difficulty", "scientific_significance"}
+    calls = list(runner.calls)
+    assert pipeline.run() == summary
+    assert runner.calls == calls
+
+
 def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficulty_cutoff(
     tmp_path: Path,
 ) -> None:
@@ -732,24 +762,33 @@ def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficu
         }
     ]
     texts = []
+    metadata_records = []
     for item in summary["solution_repositories"]:
         assert item["topic_id"] == "hubbard"
         assert item["problem_id"] in summary["accepted_problem_ids"]
         repo = Path(item["solution_repo"])
         readme = repo / "README.md"
         assert validate_problem_readme(readme) == []
-        assert sorted(path.name for path in repo.iterdir()) == [".git", "README.md"]
+        assert sorted(path.name for path in repo.iterdir()) == [
+            ".git", "README.md", "metadata"
+        ]
+        metadata = json.loads((repo / "metadata/problem.json").read_text(encoding="utf-8"))
+        metadata_records.append(metadata)
+        assert set(metadata) == {"solution_difficulty", "scientific_significance"}
+        assert not (repo / "docs/verification_reference.md").exists()
+        assert not (repo / "docs/evaluation-rubric.md").exists()
         text = readme.read_text(encoding="utf-8")
         texts.append(text)
         assert [
             line[3:] for line in text.splitlines() if line.startswith("## ")
         ] == list(README_SECTIONS)
-        assert "The verification contract below evaluates answers" in text
-        assert "Affected-field significance:" in text
+        assert "The verification contract below evaluates answers" not in text
+        assert "Affected-field significance:" not in text
     combined = "\n".join(texts)
-    assert "finite-size artifact" in combined
+    assert "finite-size artifact" not in combined
+    assert "finite-size artifact" in json.dumps(metadata_records)
     assert "Adjacent parameter regimes are known" in combined
-    assert "Verification difficulty is `10/10`" in combined
+    assert "Verification difficulty" not in combined
 
     manifests = sorted(pipeline.run_dir.glob("candidates/*/problem.yaml"))
     assert len(manifests) == 2
@@ -769,13 +808,13 @@ def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficu
             matching["solution_repo"]
         ).name
     invalid_problem = yaml.safe_load(manifests[0].read_text(encoding="utf-8"))
-    del invalid_problem["verification_contract"]
+    invalid_problem["verification_difficulty"]["score"] = 11
     invalid_manifest = tmp_path / "invalid-problem.yaml"
     invalid_manifest.write_text(
         yaml.safe_dump(invalid_problem, sort_keys=False), encoding="utf-8"
     )
     assert any(
-        "verification_contract" in error
+        "verification_difficulty" in error
         for error in validate_problem(
             invalid_manifest, repository_root / "schemas/problem.schema.json"
         )
@@ -798,6 +837,13 @@ def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficu
     # agent runs with its stage directory as cwd.
     for role, prompt_list in runner.prompts.items():
         for prompt in prompt_list:
+            if role in {"research", "problem-reviewer"}:
+                assert prompt.count(campaign_mod._VERIFICATION_DIFFICULTY_PROMPT) == 1
+                assert prompt.count(campaign_mod.VERIFICATION_DIFFICULTY_RUBRIC) == 1
+                assert "This field is optional" in prompt
+                assert "Do not generate verification_contract" in prompt
+                assert "For every answer type" not in prompt
+                assert "oracle-like CI" not in prompt
             if role == "discovery":
                 assert prompt.startswith("If ./memory.md exists, first read it")
             else:
@@ -875,7 +921,7 @@ def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficu
         runner.prompts["problem-reviewer"][0].lower().split()
     )
     assert "not automatic rejection grounds" in reviewer_prompt
-    assert "holistic expert review" in reviewer_prompt
+    assert "expert judgment of completion is valid" in reviewer_prompt
     assert "proxy or materially narrower target" in reviewer_prompt
     # Jargon self-containment guidance
     research_prompt = runner.prompts["research"][0].lower()

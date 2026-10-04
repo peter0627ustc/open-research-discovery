@@ -13,8 +13,6 @@
     "problem_statement",
     "scientific_significance",
     "solution_difficulty",
-    "verification_contract",
-    "verification_difficulty",
     "audit_outcome"
   ],
   "properties": {
@@ -51,7 +49,8 @@
       "items": {"type": "string", "minLength": 1}
     },
     "verification_contract": {
-      "type": "object",
+      "description": "Optional legacy field, retained only for reading old records. New discovery research does not generate acceptance contracts or CI.",
+      "type": ["object", "null"],
       "minProperties": 1,
       "additionalProperties": {
         "type": "object",
@@ -64,7 +63,8 @@
       }
     },
     "verification_difficulty": {
-      "type": "object",
+      "description": "Optional internal 0-10 residual review-burden estimate based on the stated problem; independent of any acceptance contract or CI. Omit or use null when unassessed.",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["score", "rationale"],
       "properties": {

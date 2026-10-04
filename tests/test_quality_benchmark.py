@@ -18,6 +18,7 @@ from open_research_discovery.quality import (
     QUALITY_RUBRIC,
     QualityError,
     _entry,
+    _evaluation_prompt,
     build_quality_dataset,
     classify_identifier,
     evaluate_quality,
@@ -39,8 +40,12 @@ def test_quality_rubric_accepts_holistic_expert_verification() -> None:
         "several linked methods, deliverables, or potential publications" in rubric
     )
     assert "holistic proof review" in rubric
-    assert "absent or partial ci" in rubric
+    assert "do not require acceptance contracts" in rubric
+    assert "their absence is not a defect" in rubric
     assert "proxy or materially narrower target" in rubric
+    assert "per-type verification contracts" not in rubric
+    assert "source checks, but must never supply missing public definitions" in rubric
+    assert "do not solve the problem or design a checker" in rubric
 
 VALID_README = """\
 # A problem title
@@ -58,22 +63,6 @@ Statement text.
 ## Current Progress
 
 - Status: `ready`
-
-## Scientific Significance
-
-Significance text.
-
-## Answer Types
-
-A proof or a counterexample.
-
-## Verification Standard
-
-Standard text.
-
-## Suggested CI
-
-CI text.
 
 ## References
 
@@ -115,16 +104,6 @@ def _problem(
             }
         },
         "solution_difficulty": ["The search space grows combinatorially."],
-        "verification_contract": {
-            "proof": {
-                "contract": "Check the claimed proof line by line.",
-                "ci_contract": None,
-            },
-            "counterexample graph": {
-                "contract": "Confirm the witness satisfies the predicate.",
-                "ci_contract": "assert check(candidate)",
-            },
-        },
         "verification_difficulty": {
             "score": 1,
             "rationale": "A counterexample is directly checkable.",
@@ -426,7 +405,7 @@ def test_build_from_pool_uses_catalog_snapshots(tmp_path: Path) -> None:
 
 def test_build_keeps_invalid_manifest_as_flagged_case(tmp_path: Path) -> None:
     broken = _problem("ORP-0009")
-    del broken["verification_contract"]
+    broken["verification_difficulty"]["score"] = 11
     out_dir = _build(tmp_path, [_problem("ORP-0001"), broken])
     manifest = json.loads(
         (out_dir / "manifest.json").read_text(encoding="utf-8")
@@ -443,7 +422,7 @@ def test_build_keeps_invalid_manifest_as_flagged_case(tmp_path: Path) -> None:
     )
     assert case["manifest_valid"] is False
     assert any(
-        "verification_contract" in error for error in case["validation_errors"]
+        "verification_difficulty" in error for error in case["validation_errors"]
     )
 
 
@@ -602,6 +581,10 @@ def test_evaluate_is_blind_offline_and_resumable(tmp_path: Path) -> None:
     # No pipeline context: the reviewer must not see build-time verdicts.
     assert "manifest_valid" not in prompt
     assert "validation_errors" not in prompt
+    assert "internal_audit_context" in prompt
+    assert "Only the README defines the solver's task" in prompt
+    assert "content authority" not in prompt
+    assert "per-type verification contracts" not in prompt
     resumed = evaluate_quality(
         dataset_dir=dataset,
         out_dir=tmp_path / "run",
@@ -612,6 +595,121 @@ def test_evaluate_is_blind_offline_and_resumable(tmp_path: Path) -> None:
     )
     assert len(runner.calls) == 1
     assert resumed["predictions"][0]["reused"] is True
+
+
+def test_quality_ignores_hidden_contracts_and_legacy_dataset_rubric(
+    tmp_path: Path,
+) -> None:
+    problem = _problem()
+    problem["verification_contract"] = {
+        "proof": {
+            "contract": "HIDDEN: C must be independent of N.",
+            "ci_contract": "HIDDEN: assert uniform_bound()",
+        }
+    }
+    problem["verification_difficulty"] = None
+    dataset = _build(tmp_path, [problem])
+    input_path = dataset / "cases" / "ORP-0001" / "input.json"
+    case = json.loads(input_path.read_text(encoding="utf-8"))
+    assert case["manifest_valid"] is True
+    case["readme_markdown"] = VALID_README
+    case["task"]["rubric"] = (
+        "LEGACY: manifest is the content authority; "
+        "require per-type verification contracts."
+    )
+    dump_json(input_path, case)
+    runner = _FakeQualityRunner()
+    evaluate_quality(
+        dataset_dir=dataset,
+        out_dir=tmp_path / "run",
+        input_schema=INPUT_SCHEMA,
+        prediction_schema=PREDICTION_SCHEMA,
+        runner=runner,
+    )
+    prompt = runner.calls[0]["prompt"]
+    assert QUALITY_RUBRIC in prompt
+    assert "LEGACY:" not in prompt
+    assert "HIDDEN:" not in prompt
+    assert '"verification_contract"' not in prompt
+    assert '"verification_difficulty"' not in prompt
+    assert '"solution_difficulty"' not in prompt
+    assert '"scientific_significance"' not in prompt
+    dossier = json.loads(prompt.split("Frozen dossier:\n", 1)[1])
+    assert dossier["readme_markdown"] == VALID_README
+    assert dossier["internal_audit_context"] == {
+        "references": problem["references"],
+        "previous_progress": problem["previous_progress"],
+    }
+    assert score_quality(
+        dataset_dir=dataset,
+        input_schema=INPUT_SCHEMA,
+        prediction_schema=PREDICTION_SCHEMA,
+        gold_schema=GOLD_SCHEMA,
+    )["cases"][0]["mechanical_issues"] == []
+
+
+@pytest.mark.parametrize(
+    "difficulty",
+    ["omitted", None, {"score": 10, "rationale": "Expert judgment needed."}],
+)
+def test_quality_accepts_optional_internal_difficulty(
+    tmp_path: Path,
+    difficulty: object,
+) -> None:
+    problem = _problem()
+    if difficulty == "omitted":
+        problem.pop("verification_difficulty")
+    else:
+        problem["verification_difficulty"] = difficulty
+    dataset = _build(tmp_path, [problem])
+    case = json.loads(
+        (dataset / "cases" / "ORP-0001" / "input.json").read_text(encoding="utf-8")
+    )
+    assert case["manifest_valid"] is True
+    assert '"verification_difficulty"' not in _evaluation_prompt(case)
+
+
+@pytest.mark.parametrize("change", ["legacy_metadata", "input", "prompt", "schema"])
+def test_quality_resume_does_not_reuse_outdated_predictions(
+    tmp_path: Path,
+    change: str,
+) -> None:
+    dataset = _build(tmp_path, [_problem()])
+    runner = _FakeQualityRunner()
+    prediction_schema = tmp_path / "prediction.schema.json"
+    prediction_schema.write_text(
+        PREDICTION_SCHEMA.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    kwargs = {
+        "dataset_dir": dataset,
+        "out_dir": tmp_path / "run",
+        "input_schema": INPUT_SCHEMA,
+        "prediction_schema": prediction_schema,
+        "runner": runner,
+    }
+    evaluate_quality(**kwargs)
+    input_path = dataset / "cases" / "ORP-0001" / "input.json"
+    metadata_path = tmp_path / "run" / "predictions" / "ORP-0001" / "metadata.json"
+    if change == "input":
+        case = json.loads(input_path.read_text(encoding="utf-8"))
+        case["readme_markdown"] = VALID_README
+        dump_json(input_path, case)
+    elif change == "schema":
+        schema = json.loads(prediction_schema.read_text(encoding="utf-8"))
+        schema["description"] = "Updated output policy."
+        dump_json(prediction_schema, schema)
+    else:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if change == "legacy_metadata":
+            metadata.pop("evaluation_prompt_sha256")
+        else:
+            metadata["evaluation_prompt_sha256"] = "old-contract-based-prompt"
+        dump_json(metadata_path, metadata)
+    report = evaluate_quality(**kwargs, resume=True)
+    assert len(runner.calls) == 2
+    assert report["predictions"][0]["reused"] is False
+    assert evaluate_quality(**kwargs, resume=True)["predictions"][0]["reused"] is True
+    assert len(runner.calls) == 2
 
 
 def test_evaluate_rejects_live_retrieval_inputs(tmp_path: Path) -> None:
@@ -723,7 +821,7 @@ def test_validate_dataset_inputs_only_and_gold_coverage(
     tmp_path: Path,
 ) -> None:
     broken = _problem("ORP-0009")
-    del broken["verification_contract"]
+    broken["verification_difficulty"]["score"] = 11
     dataset = _build(tmp_path, [_problem("ORP-0001"), broken])
     with pytest.raises(QualityError, match="gold directory does not exist"):
         validate_quality_dataset(

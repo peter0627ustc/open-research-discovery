@@ -59,3 +59,19 @@ def test_solver_difficulty_metadata_does_not_affect_ranking() -> None:
 
 def test_missing_fields_fall_back_to_neutral_order() -> None:
     assert rank_records([{"id": "ORP-0001"}])[0]["id"] == "ORP-0001"
+
+
+def test_optional_difficulty_stays_unassessed_and_sorts_after_real_scores() -> None:
+    hardest = record("ORP-0003", verification_difficulty=10)
+    omitted = record("ORP-0001")
+    omitted.pop("verification_difficulty")
+    null = record("ORP-0002")
+    null["verification_difficulty"] = None
+    ranked = rank_records([null, omitted, hardest])
+
+    assert [item["id"] for item in ranked] == ["ORP-0003", "ORP-0001", "ORP-0002"]
+    assert ranked[0]["verification_difficulty"] == 10
+    for item in ranked[1:]:
+        assert item.get("verification_difficulty") is None
+        assert "verification difficulty unassessed" in item["ranking_rationale"]
+        assert "/10" not in item["ranking_rationale"]

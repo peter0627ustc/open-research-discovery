@@ -12,6 +12,7 @@ import pytest
 from open_research_discovery.agent import (
     AgentExecutionError,
     CodexRunner,
+    codex_output_schema,
     strict_output_schema_errors,
 )
 
@@ -53,7 +54,69 @@ def test_stage_schemas_avoid_unsupported_codex_keywords() -> None:
     ).glob("*.schema.json"):
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         walk(schema)
-        assert strict_output_schema_errors(schema) == []
+        assert strict_output_schema_errors(codex_output_schema(schema)) == []
+
+
+def test_codex_schema_encodes_nullable_optional_fields_without_mutating_source() -> None:
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "required": ["value"],
+        "properties": {
+            "value": {"type": "string"},
+            "optional": {
+                "type": ["object", "null"], "additionalProperties": False,
+                "required": ["score"],
+                "properties": {
+                    "score": {"type": "integer"},
+                    "note": {"type": ["string", "null"]},
+                },
+            },
+        },
+    }
+    adapted = codex_output_schema(schema)
+    assert strict_output_schema_errors(adapted) == []
+    assert adapted["required"] == ["value", "optional"]
+    assert adapted["properties"]["optional"]["required"] == ["score", "note"]
+    assert schema["required"] == ["value"]
+    assert schema["properties"]["optional"]["required"] == ["score"]
+
+
+def test_codex_runner_passes_nullable_optional_schema_and_keeps_local_optional_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from open_research_discovery import agent
+
+    schema_path = tmp_path / "schema.json"
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "required": ["ok"],
+        "properties": {
+            "ok": {"type": "boolean"},
+            "verification_difficulty": {"type": ["integer", "null"]},
+        },
+    }
+    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+
+    def execute(**kwargs):
+        command = kwargs["command"]
+        wire_path = Path(command[command.index("--output-schema") + 1])
+        wire = json.loads(wire_path.read_text(encoding="utf-8"))
+        assert wire_path != schema_path
+        assert strict_output_schema_errors(wire) == []
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text(json.dumps({"ok": True}), encoding="utf-8")
+        return "", "", 0
+
+    monkeypatch.setattr(agent, "_execute_headless", execute)
+    runner = CodexRunner(repository_root=tmp_path)
+    monkeypatch.setattr(runner, "version", lambda: "test-codex")
+    result = runner.run(
+        role="research", prompt="Return an optional internal difficulty estimate.",
+        schema_path=schema_path, output_path=tmp_path / "output.json",
+        events_path=tmp_path / "events.jsonl",
+    )
+    assert result.output == {"ok": True}
+    assert json.loads(schema_path.read_text(encoding="utf-8")) == schema
 
 
 def test_codex_runner_rejects_non_strict_schema_before_exec(

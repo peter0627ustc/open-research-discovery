@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -13,10 +14,6 @@ README_SECTIONS = (
     "Background",
     "Problem Statement",
     "Current Progress",
-    "Scientific Significance",
-    "Answer Types",
-    "Verification Standard",
-    "Suggested CI",
     "References",
 )
 
@@ -24,10 +21,6 @@ README_ZH_SECTIONS = (
     "背景",
     "题面",
     "现有进展",
-    "科学意义",
-    "答案类型",
-    "校验标准",
-    "建议CI",
     "相关文献引用",
 )
 
@@ -56,44 +49,17 @@ def _public_text(value: object, fallback: str = "To be completed.") -> str:
     return rendered or fallback
 
 
-def _bullet_lines(
-    values: list[object], fallback: str = "To be completed."
-) -> list[str]:
-    rendered = [_text(value, "") for value in values]
-    rendered = [value for value in rendered if value]
-    if not rendered:
-        return [f"- {fallback}"]
+def render_problem_metadata(problem: dict[str, Any]) -> str:
+    """Keep non-statement scientific assessments outside the README."""
 
-    lines: list[str] = []
-    for value in rendered:
-        first, *continuation = value.splitlines()
-        lines.append(f"- {first}")
-        lines.extend(f"  {line}" if line else "" for line in continuation)
-    return lines
-
-
-def _review_intro(difficulty: int) -> str:
-    if difficulty == 0:
-        return (
-            "Verification difficulty is `0/10`: every load-bearing claim is "
-            "discharged by mechanical checks, replay, or certificates, with "
-            "trivial specification fidelity. No derivation review or holistic "
-            "judgment remains. The check need not "
-            "be automated or implemented in CI."
-        )
-    if difficulty == 10:
-        return (
-            "Verification difficulty is `10/10`: the essential claim cannot be "
-            "decomposed into independently checkable units, so correctness "
-            "depends on holistic review of the argument as a whole."
-        )
-    return (
-        f"Verification difficulty is `{difficulty}/10`: after the delegable "
-        "checks, the reviewer must still perform some local reasoning about "
-        "the derivation or specification fidelity supporting the result. "
-        "Higher scores indicate more numerous, deeper, or more dependent "
-        "load-bearing arguments."
-    )
+    metadata = {
+        "solution_difficulty": problem.get("solution_difficulty") or [],
+        "scientific_significance": problem.get("scientific_significance") or {},
+    }
+    difficulty = problem.get("verification_difficulty")
+    if difficulty is not None:
+        metadata["verification_difficulty"] = difficulty
+    return json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"
 
 
 def normalize_github_math(text: str) -> str:
@@ -108,16 +74,6 @@ def normalize_github_math(text: str) -> str:
 def render_problem_readme(problem: dict[str, Any]) -> str:
     """Render the human-facing projection of a Problem Schema v1.0 record."""
 
-    significance = problem.get("scientific_significance") or {}
-    affected = significance.get("affected_field") or {}
-    contract = problem.get("verification_contract") or {}
-    difficulty = problem.get("verification_difficulty") or {}
-    score_value = difficulty.get("score")
-    score = (
-        int(score_value)
-        if isinstance(score_value, int) and not isinstance(score_value, bool)
-        else 10
-    )
     background = _public_text(problem.get("background"), "")
     background_lines = (
         background.splitlines()
@@ -127,11 +83,6 @@ def render_problem_readme(problem: dict[str, Any]) -> str:
             "remain to be completed."
         ]
     )
-    solving = [
-        str(item).strip()
-        for item in problem.get("solution_difficulty") or []
-        if str(item).strip()
-    ]
     progress = [
         str(item).strip()
         for item in problem.get("previous_progress") or []
@@ -156,21 +107,7 @@ def render_problem_readme(problem: dict[str, Any]) -> str:
         "",
         _public_text(problem.get("problem_statement")),
         "",
-        (
-            "The verification contract below evaluates answers to this statement. "
-            "It does not narrow or redefine the research question."
-        ),
-        "",
     ]
-    if solving:
-        lines.extend(
-            [
-                "Known solving difficulties:",
-                "",
-                *_bullet_lines(solving),
-                "",
-            ]
-        )
     lines.extend(
         [
             "## Current Progress",
@@ -185,69 +122,6 @@ def render_problem_readme(problem: dict[str, Any]) -> str:
             lines.append("")
     else:
         lines.extend(["No prior progress is recorded yet.", ""])
-    lines.extend(
-        [
-            "## Scientific Significance",
-            "",
-            f"Affected-field significance: `{_text(affected.get('level'), 'unscored')}`.",
-            "",
-            _public_text(affected.get("description"), ""),
-            "",
-            "## Answer Types",
-            "",
-            "Accepted answer types are descriptive rather than restrictive:",
-            "",
-            *_bullet_lines(list(contract)),
-            "",
-            "## Verification Standard",
-            "",
-        ]
-    )
-    for answer_type, entry in contract.items():
-        entry = entry or {}
-        lines.extend(
-            [
-                f"### {_text(answer_type, 'answer type')}",
-                "",
-                _public_text(entry.get("contract"), "Not yet specified."),
-                "",
-            ]
-        )
-    lines.extend(
-        [
-            "### Verification Difficulty",
-            "",
-            _review_intro(score),
-            "",
-            _public_text(difficulty.get("rationale"), ""),
-            "",
-            "The review should also determine whether the submission truly answers "
-            "the original problem, whether an equivalent or stronger result already "
-            "exists, and whether a partial result constitutes substantive progress.",
-            "",
-            "## Suggested CI",
-            "",
-        ]
-    )
-    for answer_type, entry in contract.items():
-        entry = entry or {}
-        lines.extend(
-            [
-                f"### {_text(answer_type, 'answer type')}",
-                "",
-            ]
-        )
-        ci_text = str(entry.get("ci_contract") or "").strip()
-        if ci_text:
-            lines.extend([_public_text(ci_text), ""])
-        else:
-            lines.extend(
-                [
-                    "No CI is currently suggested for this answer type; "
-                    "evaluation relies on reviewer judgment.",
-                    "",
-                ]
-            )
     lines.extend(["## References", ""])
     if references:
         lines.extend(
@@ -289,7 +163,7 @@ def validate_problem_readme(path: Path) -> list[str]:
     )
     if actual_sections != README_SECTIONS:
         errors.append(
-            "README.md must contain exactly the seven canonical top-level sections"
+            "README.md must contain exactly the four canonical top-level sections"
         )
     for section in README_ZH_SECTIONS:
         if f"## {section}" in text:
@@ -342,7 +216,7 @@ def validate_problem_translation(path: Path) -> list[str]:
     )
     if actual_sections != README_ZH_SECTIONS:
         errors.append(
-            "README.zh-CN.md must contain exactly the seven canonical top-level sections"
+            "README.zh-CN.md must contain exactly the four canonical top-level sections"
         )
     unresolved = (
         "{{TITLE}}",

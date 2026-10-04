@@ -50,6 +50,7 @@ from .quality import EvidenceFetcher
 from .problem_repo import (
 
     create_problem_repo,
+    render_problem_metadata,
     render_problem_readme,
     validate_problem_readme,
 )
@@ -184,34 +185,26 @@ thresholds merely to make such language mechanical.
 The material defect is the absence of a coherent scientific objective or a
 recognizable completion boundary: a qualified domain expert would have to
 invent missing scope, ignore an unrelated requested result, or reinterpret the
-question to decide whether the overall objective was met. Mechanical CI may
-cover only auxiliary checks; full acceptance may depend on holistic expert
-review. The complete verification contract must still evaluate the stated
-scientific objective without replacing it with a proxy or a narrower target.
+question to understand its overall scientific objective. Expert judgment of
+completion is valid; do not replace the stated objective with a proxy or a
+narrower target.
 """.strip()
 
-# Verification-difficulty calibration shared by the Research and Problem
-# Reviewer prompts.
-_VERIFICATION_CALIBRATION = """
-Score 0 when every load-bearing claim is discharged by mechanical checks,
-replay, or certificates with trivial specification fidelity, regardless of
-whether that check is automated or human. Explicit
-counterexamples, exact solutions, finite constructions, frozen
-code-to-experiment comparisons, and required proof-assistant artifacts with
-contract-pinned statements may all
-be 0. Use 1-9 for the increasing residual: a few independent local reasoning
-units at 1-3, connected derivations or substantial specification-fidelity
-reconstruction at 4-6, and long, fragile, or novel chains at 7-9. Score 10
-for an essential claim that cannot be decomposed into independently checkable
-units.
-When an exact solution is checked primarily through independent numerical
-reproduction of the original finite-size model, score it 2 for the local
-residual in model fidelity, tolerances, coverage, and exceptional cases; do
-not count discovery difficulty.
-Do not hide derivation work behind an oracle-like CI step. Every claimed CI
-operation must be direct recomputation, a named known terminating procedure
-with concrete inputs, or replay of a submitted artifact. A command like
-"decide the universal property exactly" is not an operational procedure.
+# One internal difficulty prompt and rubric shared by Research and Reviewer.
+_VERIFICATION_DIFFICULTY_PROMPT = f"""
+For internal use only, estimate or review verification_difficulty as one 0-10
+score for the whole stated problem, with a short rationale. Explain the
+plausible mechanically checkable parts, the remaining independent reasoning
+or scientific judgment, and why these support the score. Base this estimate on
+the problem description and literature already inspected; do not conduct a
+separate investigation to design verification procedures or solve the problem.
+Do not generate verification_contract, ci_contract, answer-type lists,
+acceptance rules, CI plans, or verification documents.
+This field is optional: if the available information does not support an honest
+estimate, omit it or set it to null. Missing verification_difficulty is not a
+defect or a reason to reject, and must not be reported as a numerical score.
+Apply this rubric, without narrowing the scientific target:
+{VERIFICATION_DIFFICULTY_RUBRIC}
 """.strip()
 
 
@@ -2332,13 +2325,6 @@ questions along boundaries supported by the source context. A restricted
 special case is a derived problem and must never replace or masquerade as its
 parent.
 
-When a record names a concrete finite target and then appends an open-ended
-class such as "and related cases", make the concrete target its own candidate.
-Do not leave the open-ended phrase attached to that candidate. Preserve the
-broader class as a separate candidate only if the source gives it a coherent
-acceptance target; otherwise keep the source wording but do not manufacture a
-class-wide claim.
-
 When a source names a famous or standard open problem, use the primary or
 standard authoritative title and formulation as the canonical target, quoted
 from the source record's context; you have no network access, so never fetch
@@ -2355,8 +2341,7 @@ what knowledge, capability, bound, mechanism, or decision would change if the
 problem were solved. Never reject or down-rank a scientifically important
 problem merely because independent review is difficult.
 
-Do not propose a method for solving the problem. The Research Agent later
-produces the full verification contract from scratch, so do not output one.
+Do not propose a method for solving the problem or design acceptance rules.
 The canonical statement must not narrow or redefine the source question.
 Write `assessment` as a free-form screening narrative: why the candidate
 matters, what solving it would change, and any scope or named-problem
@@ -2888,8 +2873,9 @@ and human readers use it to follow your audit; the pipeline never parses it.
 Return one JSON object following the problem schema (see
 docs/problem-schema-v1.0.md): title, abstract, background, references,
 previous_progress, problem_statement, scientific_significance,
-solution_difficulty, verification_contract, verification_difficulty, plus
-audit_outcome. The pipeline owns and injects every mechanical field
+solution_difficulty, plus audit_outcome. verification_difficulty is optional
+internal metadata as described below. The pipeline owns and injects every
+mechanical field
 (problem_id, parent_problem_id, subproblem_ids, schema_version, status,
 domain, topic_id, repository) — never invent them.
 
@@ -2916,21 +2902,7 @@ changes, and whether the impact is direct or indirect.
 
 solution_difficulty lists the plausible solving difficulties without scores.
 
-verification_contract is keyed by answer type; the keys are the admissible
-answer types. Each entry's contract states what an answer of that type must
-submit and what the reviewer checks to pass or fail it, evaluating an answer
-to the stated problem without narrowing or redefining it. ci_contract is the
-mechanically executable part of that contract, or null when no reasonable
-automated acceptance exists; a claimed CI operation must be direct
-recomputation, a named known terminating procedure with concrete inputs, or
-replay of a submitted artifact — never an oracle like "decide the universal
-property exactly".
-
-verification_difficulty is one 0-10 score for the whole problem: the residual
-Agent or human reviewer judgment after every mechanically checkable part is
-excluded. Apply this rubric:
-{VERIFICATION_DIFFICULTY_RUBRIC}
-{_VERIFICATION_CALIBRATION}
+{_VERIFICATION_DIFFICULTY_PROMPT}
 
 This is a literature-status audit, not a solver run. Do not attempt a novel
 proof, counterexample, construction, computation, or experimental explanation
@@ -3006,11 +2978,12 @@ problem_statement, or previous_progress must appear here.
                     f"- Affected-field significance: "
                     f"`{affected.get('level', 'unscored')}` — "
                     f"{affected.get('description', '')}",
-                    f"- Verification difficulty: "
-                    f"{difficulty.get('score', '?')}/10 — "
-                    f"{difficulty.get('rationale', '')}",
-                    "- Answer types: "
-                    + ", ".join(str(key) for key in assessment.get("verification_contract") or {}),
+                    "- Verification difficulty: "
+                    + (
+                        f"{difficulty['score']}/10 — {difficulty.get('rationale', '')}"
+                        if difficulty
+                        else "unassessed"
+                    ),
                     "- Key evidence: " + (str(progress[0]) if progress else "none"),
                 ]
             ),
@@ -3089,13 +3062,12 @@ wrong years are defects you must fix, and you report how many references
 you corrected in concerns. Check
 the audit outcome,
 the surviving open core, scientific significance, content-level honesty,
-verification difficulty, target fidelity and limitations, and the per-type CI
-contracts. For a named problem, check the record against the
+target fidelity and limitations. For a named problem, check the record against
+the
 authoritative formulation quoted in the source record; a scoped variant
 must be presented as the derived problem it is, never as the famous problem
 itself.
-Use this exact rubric:
-{VERIFICATION_DIFFICULTY_RUBRIC}
+{_VERIFICATION_DIFFICULTY_PROMPT}
 
 Apply this problem-window guidance:
 {_PROBLEM_WINDOW_GUIDANCE}
@@ -3106,7 +3078,7 @@ objective and relationships clear enough that a qualified domain expert can
 judge the whole. Reject for problem-window reasons only when no coherent
 objective or recognizable completion boundary can be recovered without
 inventing scope, dropping a substantively unrelated requested result, or
-letting the verification contract accept a proxy or materially narrower
+replacing the scientific objective with a proxy or materially narrower
 target. Do not repair that defect by silently shrinking the problem.
 
 {_UNTRUSTED_EVIDENCE_NOTICE}
@@ -3127,12 +3099,6 @@ refuted, or major-progress judgment depends on a proof, counterexample,
 construction, computation, or explanation newly created by the Research Agent
 rather than external research evidence. Do not validate that proposed new
 solution as part of problem discovery.
-Reject an artificially low score that depends on an invented proxy benchmark
-rather than the stated route, or that moves burden into an unverified
-specification gap. Verification difficulty and CI are separate layers: the
-score is the structural residual, while CI records how much of the delegable
-checking has been automated and cannot lower the score.
-{_VERIFICATION_CALIBRATION}
 Do not solve the problem and do not mutate any pool or repository.
 
 For current status, do not demand a literal recent "remains open" sentence. A
@@ -3141,11 +3107,6 @@ separation of plausible adjacent results may support an open outcome.
 Reject only absence-based claims that lack that reconstruction, or evidence
 that is materially incomplete, conflicting, or identity-ambiguous.
 
-Reject oracle-like CI contracts. A score-0 result may be reviewed manually,
-but claimed machine CI must still name a real procedure. Pseudocode
-must identify a known terminating procedure and its concrete input/output;
-"decide", "prove", or "verify" followed by the target global claim is not an
-algorithm.
 Reject any public-facing repository field that violates these writing rules:
 {_WRITING_RULES}
 
@@ -3407,6 +3368,11 @@ and null `problem`.
                 (repo_dir / "README.md").write_text(
                     render_problem_readme(problem), encoding="utf-8"
                 )
+                metadata_path = repo_dir / "metadata" / "problem.json"
+                metadata_path.parent.mkdir(parents=True, exist_ok=True)
+                metadata_path.write_text(
+                    render_problem_metadata(problem), encoding="utf-8"
+                )
                 errors = validate_problem(
                     structured_path, self.schemas / "problem.schema.json"
                 )
@@ -3424,7 +3390,7 @@ and null `problem`.
                         check=True,
                     )
                 subprocess.run(
-                    ["git", "add", "README.md"],
+                    ["git", "add", "README.md", "metadata/problem.json"],
                     cwd=repo_dir,
                     text=True,
                     capture_output=True,
@@ -3477,6 +3443,7 @@ and null `problem`.
                         "problem_repo": str(repo_dir),
                         "solution_repo": str(repo_dir),
                         "readme_sha256": file_sha256(repo_dir / "README.md"),
+                        "metadata_sha256": file_sha256(metadata_path),
                         "internal_record_sha256": file_sha256(structured_path),
                         "git_head": git_head,
                     },
@@ -3498,6 +3465,7 @@ and null `problem`.
                     "assessment": assessment,
                     "verdict": verdict,
                     "problem_id": problem_id,
+                    "readme_layout_version": 2,
                 }
             ),
             output_path=output_path,

@@ -1,10 +1,14 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from open_research_discovery.common import load_yaml, problem_manifest_paths
 from open_research_discovery.problem_repo import (
     README_SECTIONS,
     create_problem_repo,
     normalize_github_math,
+    render_problem_metadata,
     render_problem_readme,
     validate_problem_readme,
     validate_problem_translation,
@@ -72,7 +76,7 @@ def test_problem_repo_can_include_chinese_translation_scaffold(
     assert "如两者出现冲突，以 README.md 为准" in translation
 
 
-def test_rendered_problem_readme_contains_narrative_contract(tmp_path: Path) -> None:
+def test_rendered_problem_readme_contains_only_problem_narrative(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
     problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
     problem["title"] = "Finite counterexample"
@@ -99,16 +103,26 @@ def test_rendered_problem_readme_contains_narrative_contract(tmp_path: Path) -> 
 
     assert validate_problem_readme(readme) == []
     text = readme.read_text(encoding="utf-8")
-    assert "every load-bearing claim is discharged" in text
-    assert "need not be automated or implemented in CI" in text
-    assert "Parse the witness." in text
+    assert "every load-bearing claim is discharged" not in text
+    assert "Parse the witness." not in text
+    assert "Check every hypothesis" not in text
+    assert "Every condition is directly checkable." not in text
     assert "This question arises in the spectral study" in text
     assert "The effective operator is\n\n$$\nA(x)=xI-H." in text
     assert "Here, $I$ is the identity and $H$" in text
     assert "Equivalently, $$A=xI-H$$." in text
     assert "## Background" in text
     assert "## Problem Statement" in text
-    assert "does not narrow or redefine the research question" in text
+    assert "The verification contract below" not in text
+    for section in (
+        "Known solving difficulties",
+        "Scientific Significance",
+        "Answer Types",
+        "Verification Standard",
+        "Verification Difficulty",
+        "Suggested CI",
+    ):
+        assert section not in text
     assert r"\(" not in text
     assert r"\[" not in text
 
@@ -189,16 +203,61 @@ def test_repository_and_manifest_discovery_are_separate(tmp_path: Path) -> None:
     ] == ["ORP-0001-legacy-layout", "ORP-0002-current"]
 
 
-def test_readme_without_ci_contract_notes_reviewer_judgment() -> None:
+def test_readme_without_ci_contract_omits_verification_content() -> None:
     root = Path(__file__).resolve().parents[1]
     problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
 
     text = render_problem_readme(problem)
 
-    assert "## Suggested CI" in text
-    assert (
-        "No CI is currently suggested for this answer type" in text
-    )
+    assert "## Suggested CI" not in text
+    assert "No CI is currently suggested for this answer type" not in text
+
+
+@pytest.mark.parametrize("score", [0, 6, 10])
+def test_metadata_preserves_only_requested_scientific_assessments(score: int) -> None:
+    root = Path(__file__).resolve().parents[1]
+    problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
+    problem["solution_difficulty"] = ["A technical obstacle."]
+    problem["scientific_significance"] = {
+        "affected_field": {"level": "high", "description": "An important advance."}
+    }
+    problem["verification_difficulty"] = {
+        "score": score,
+        "rationale": "The recorded review burden.\nNo reassessment is needed.",
+    }
+
+    metadata = json.loads(render_problem_metadata(problem))
+
+    assert metadata == {
+        "solution_difficulty": problem["solution_difficulty"],
+        "scientific_significance": problem["scientific_significance"],
+        "verification_difficulty": problem["verification_difficulty"],
+    }
+    text = render_problem_readme(problem)
+    assert "A technical obstacle." not in text
+    assert "An important advance." not in text
+    assert "The recorded review burden." not in text
+    assert "verification_difficulty" not in text
+    assert "Verification Difficulty" not in text
+    assert "verification_contract" in problem
+
+
+@pytest.mark.parametrize("difficulty_present", [False, True], ids=["missing", "null"])
+def test_readme_and_metadata_do_not_require_verification_fields(
+    difficulty_present: bool,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
+    del problem["verification_contract"]
+    if difficulty_present:
+        problem["verification_difficulty"] = None
+    else:
+        del problem["verification_difficulty"]
+
+    assert "## Problem Statement" in render_problem_readme(problem)
+    assert set(json.loads(render_problem_metadata(problem))) == {
+        "solution_difficulty", "scientific_significance"
+    }
 
 
 def test_render_ignores_unknown_keys() -> None:
@@ -214,7 +273,7 @@ def test_render_ignores_unknown_keys() -> None:
     assert "Retired" not in text
 
 
-def test_readme_renders_ci_contract_text() -> None:
+def test_readme_does_not_render_ci_contract_text() -> None:
     root = Path(__file__).resolve().parents[1]
     problem = load_yaml(root / "tests" / "fixtures" / "problem-draft.yaml")
     problem["verification_contract"]["proof"]["ci_contract"] = (
@@ -223,8 +282,8 @@ def test_readme_renders_ci_contract_text() -> None:
 
     text = render_problem_readme(problem)
 
-    assert "## Suggested CI" in text
-    assert "Parse the witness. Recompute the claim." in text
+    assert "## Suggested CI" not in text
+    assert "Parse the witness. Recompute the claim." not in text
 
 
 def test_validate_problem_readme_rejects_non_github_math_delimiters(

@@ -43,7 +43,7 @@
       }
     },
     "openness_argument": {
-      "description": "The openness argument holds and the surviving open core is genuinely supported by the cited audit evidence.",
+      "description": "Public openness claims and the current-progress narrative are supported by available cited evidence. Internal audit notes cannot substitute for missing public explanation; bibliographic metadata alone cannot establish openness.",
       "type": "object",
       "additionalProperties": false,
       "required": ["score", "issues", "rationale"],
@@ -54,7 +54,7 @@
       }
     },
     "scope_fidelity": {
-      "description": "No silent narrowing or drift from the source question; requested results form a coherent scientific objective with a completion boundary recognizable to a qualified domain expert. Multiple linked methods, deliverables, or potential publications are not defects by themselves, and relative domain language is acceptable when sources, context, or field conventions make it sufficiently determinate.",
+      "description": "The complete solver-visible README states a coherent scientific objective without silent narrowing or drift from the source question. Hidden records cannot supply missing definitions, assumptions, quantifiers, or completion conditions. Multiple linked methods, deliverables, or potential publications are not defects by themselves, and relative domain language is acceptable when sources, context, or field conventions make it sufficiently determinate.",
       "type": "object",
       "additionalProperties": false,
       "required": ["score", "issues", "rationale"],
@@ -65,7 +65,7 @@
       }
     },
     "verification_executability": {
-      "description": "A qualified domain expert can apply the verification standard to the complete stated scientific objective without inventing scope, circularly assuming the conclusion, ignoring an unrelated requested result, or accepting a proxy or materially narrower target. Holistic expert review is executable verification; absent or partial CI is not a defect when that review procedure is clear.",
+      "description": "A qualified domain expert can judge a hypothetical completed answer against the complete public scientific objective without inventing scope, circular reasoning, omitted targets, or a narrower proxy. No acceptance contract, answer-type list, prescribed checking procedure, CI, or verification document is required. Hidden conditions cannot repair or add to public requirements; missing or high internal verification difficulty is not a quality defect. Do not solve the problem or design a checker.",
       "type": "object",
       "additionalProperties": false,
       "required": ["score", "issues", "rationale"],

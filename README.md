@@ -12,8 +12,8 @@ Campaigns are deliberately broader than a plain LKM-only lookup:
   intent;
 - literature questions retain their natural generality; verification does not
   manufacture a tractable restricted substitute;
-- answer types and verification difficulty are recorded, but neither is a
-  publication gate;
+- verification difficulty is optional internal review-burden metadata, never
+  a publication gate; no acceptance contracts or CI are generated;
 - every problem carries a high/medium/low affected-field significance level
   with a specific description;
 - every accepted problem compiles into its own README-first solution repository,
@@ -38,16 +38,16 @@ problem must satisfy four independent conditions:
    the confidence and uncertainty recorded honestly.
 3. **Scientific significance** — the repository states what knowledge,
    capability, bound, mechanism, experiment, or decision would change.
-4. **Verification clarity** — a qualified domain reviewer can judge whether the
-   complete scientific objective has been met without redefining it or
-   replacing it with a narrower proxy. Mechanical CI is optional.
+4. **Problem clarity** — a qualified domain reader can recognize the complete
+   scientific objective without redefining it or replacing it with a narrower
+   proxy.
 
 A famous or named problem keeps the primary or standard literature
 formulation. A finite-size or parameter-restricted variant may be useful, but it
 must be labeled as a derived problem and cannot be presented as the original.
-When a literature question is genuinely general, a valid verification contract
-describes what evidence would resolve that general question rather than making
-it smaller. A problem may legitimately require several linked methods, results,
+When a literature question is genuinely general, its description preserves
+that generality rather than making it smaller. A problem may legitimately
+require several linked methods, results,
 or potential publications. Those counts do not define its width: the relevant
 test is whether the record explains a coherent scientific objective and a
 completion boundary that a qualified domain expert can recognize. Relative
@@ -322,17 +322,17 @@ re-fetches and preserves the selected graph record, creates the candidate
 folder, and hands every selected candidate to Research. Discovery never narrows
 or rewrites the source question for verification convenience.
 
-## Verification contract
+## Internal verification difficulty
 
 Every final problem follows
 [Problem Schema v1.0](docs/problem-schema-v1.0.md)
-(`schemas/problem.schema.json`). Its verification half has:
-
-- `verification_contract` keyed by answer type: each entry states what an
-  answer of that type must submit, what the reviewer checks to pass or fail
-  it, and an optional `ci_contract` for the mechanically executable part;
-- `verification_difficulty` — a 0-10 `score` plus `rationale`, produced by the
-  Research stage.
+(`schemas/problem.schema.json`). Research estimates one optional
+`verification_difficulty` value: a 0-10 `score` plus a short `rationale`.
+Reviewer uses the same prompt and rubric to check it against the stated problem.
+If unassessed, the field may be omitted or null; no score is fabricated and
+publication is unaffected. Acceptance contracts, answer-type lists, CI plans,
+and verification documents are not generated. Old contract fields are retained
+only as optional historical-record compatibility.
 
 The score measures residual independent-review burden, not solve difficulty:
 
@@ -404,6 +404,7 @@ Compilation creates one repository per accepted problem:
 ```text
 ORP-0001-problem-slug/
   README.md
+  metadata/problem.json
   .git/
 ```
 
@@ -413,15 +414,16 @@ metadata. Its README has exactly these top-level sections:
 1. Background;
 2. Problem Statement;
 3. Current Progress;
-4. Scientific Significance;
-5. Answer Types;
-6. Verification Standard;
-7. Suggested CI;
-8. References.
+4. References.
+
+Known solving difficulties, Scientific Significance, and an assessed optional
+`verification_difficulty` (score plus rationale) are exported to
+`metadata/problem.json`, never the README. Unassessed verification difficulty
+(omitted or null in the campaign record) is omitted from the exported metadata.
 
 Raw retrieval responses, structured manifests, audit evidence, and pool views
-remain outside the generated repository. Problem-specific code, data, or CI may
-be added later only when its scientific acceptance contract needs them.
+remain outside the generated repository. No verification-reference or
+evaluation document is generated.
 
 ## Run artifacts
 
@@ -475,9 +477,13 @@ problem manifests (from a campaign run, the problem pool, or bare manifest
 paths), freezes citation metadata for every identifier they cite, and
 `discovery quality evaluate` scores each case with a blind offline reviewer
 on five dimensions (citation accuracy, openness argument, scope fidelity,
-verification executability, evidence relevance). `discovery quality score`
+verification executability, evidence relevance).
+The complete solver-visible README defines the task; internal audit context
+cannot add requirements or repair missing public definitions. No acceptance
+contracts or CI are required, and older dataset rubrics cannot override the
+current evaluation policy. `discovery quality score`
 adds deterministic mechanical checks — citation cross-checks against the
-frozen metadata, README contract validation, and cross-case duplicate
+frozen metadata, README layout validation, and cross-case duplicate
 detection — and reports per-dimension accuracy against expert gold labels,
 or a standalone defect report when no gold exists. The same agent output never
 serves as both prediction and gold. See

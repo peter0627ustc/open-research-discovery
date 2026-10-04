@@ -1027,6 +1027,11 @@ def test_invalid_selection_is_retried_by_stage_ledger(
         pipeline.state["stages"][f"campaign.selection.{TOPIC_ID}"]["status"]
         == "completed"
     )
+    prompt = next(prompt for role, prompt in runner.prompts if role == "selection")
+    assert "make the concrete target its own candidate" not in prompt
+    assert 'class such as "and related cases"' not in prompt
+    assert "a family-wide or otherwise general target remains one" in prompt
+    assert "Split only genuinely conjunctive" in prompt
 
 
 def test_campaign_config_paths_are_resolved_relative_to_config(
@@ -1348,6 +1353,7 @@ def test_compile_rebuilds_tracked_orphan_repository(tmp_path: Path) -> None:
     assert sorted(path.name for path in repo_dir.iterdir()) == [
         ".git",
         "README.md",
+        "metadata",
     ]
     assert (
         subprocess.run(
@@ -1468,6 +1474,7 @@ def test_compile_cleans_partial_repository_after_produce_failure(
     assert sorted(path.name for path in repo_dir.iterdir()) == [
         ".git",
         "README.md",
+        "metadata",
     ]
 
 

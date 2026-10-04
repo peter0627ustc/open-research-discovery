@@ -38,7 +38,10 @@
     "citation_accuracy": {"$ref": "#/$defs/dimension"},
     "openness_argument": {"$ref": "#/$defs/dimension"},
     "scope_fidelity": {"$ref": "#/$defs/dimension"},
-    "verification_executability": {"$ref": "#/$defs/dimension"},
+    "verification_executability": {
+      "description": "Assess whether a qualified expert can judge a completed answer against the complete solver-visible objective. Do not require contracts, prescribed checking procedures, CI, or verification documents; hidden conditions and internal difficulty scores do not define the task.",
+      "$ref": "#/$defs/dimension"
+    },
     "evidence_relevance": {"$ref": "#/$defs/dimension"},
     "overall": {
       "type": "object",

@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from jsonschema import Draft202012Validator
+
 from open_research_discovery.common import dump_yaml, load_yaml
 from open_research_discovery.validation import (
     validate_agentgitlab_snapshot,
@@ -72,6 +75,63 @@ def test_closed_external_status_does_not_require_progress_fields(
     dump_yaml(path, problem)
 
     assert validate_problem(path, root / "schemas" / "problem.schema.json") == []
+
+
+@pytest.mark.parametrize("null_fields", [False, True])
+def test_verification_fields_are_optional_in_ready_and_research_records(
+    tmp_path: Path, null_fields: bool,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    problem = load_yaml(root / "tests/fixtures/problem-draft.yaml")
+    problem.update(
+        problem_id="ORP-0001", status="ready",
+        references=["Later status review. https://example.test/later, 2026."],
+        previous_progress=["The inspected later work leaves this target open."],
+    )
+    for field in ("verification_contract", "verification_difficulty"):
+        if null_fields:
+            problem[field] = None
+        else:
+            problem.pop(field, None)
+    path = tmp_path / "problem.yaml"
+    dump_yaml(path, problem)
+    assert validate_problem(path, root / "schemas/problem.schema.json") == []
+
+    schema = load_yaml(root / "schemas/stages/research.schema.json")
+    research = {
+        key: value for key, value in problem.items()
+        if key in schema["properties"]
+    }
+    research["audit_outcome"] = "open"
+    assert list(Draft202012Validator(schema).iter_errors(research)) == []
+
+
+@pytest.mark.parametrize("difficulty", [
+    {"score": -1, "rationale": "Below range."},
+    {"score": 11, "rationale": "Above range."},
+    {"score": True, "rationale": "Not an integer score."},
+    {"score": 3},
+])
+def test_optional_difficulty_still_validates_when_present(
+    tmp_path: Path, difficulty: dict,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    problem = load_yaml(root / "tests/fixtures/problem-draft.yaml")
+    problem["problem_id"] = "ORP-0001"
+    problem["verification_difficulty"] = difficulty
+    path = tmp_path / "problem.yaml"
+    dump_yaml(path, problem)
+    assert any(
+        "verification_difficulty" in error
+        for error in validate_problem(path, root / "schemas/problem.schema.json")
+    )
+    schema = load_yaml(root / "schemas/stages/research.schema.json")
+    research = {
+        key: value for key, value in problem.items()
+        if key in schema["properties"]
+    }
+    research["audit_outcome"] = "open"
+    assert list(Draft202012Validator(schema).iter_errors(research))
 
 
 def test_registry_rejects_duplicate_ids_and_repositories(tmp_path: Path) -> None:

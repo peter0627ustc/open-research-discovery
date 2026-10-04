@@ -42,27 +42,26 @@ authors before compilation. The topic limits below apply to the default mode.
    scientific objective with a completion boundary that a qualified domain
    expert can recognize. Multiple methods, deliverables, or potential papers
    are not defects by themselves when they are scientifically linked.
-6. Every final problem carries a `verification_contract` keyed by answer type:
-   each entry states what is submitted, what is checked, and what passes for
-   that answer type, plus an optional `ci_contract` for the mechanically
-   executable part. Holistic expert review is valid, and CI may cover only
-   auxiliary checks. Verification evaluates an answer to the complete problem
-   statement; it must not replace that objective with a proxy or a narrower
-   target. Independent publishability, removable clauses, and relative domain
+6. Focus on the complete problem statement and its scientific objective,
+   without replacing it with a proxy or a narrower target. Independent
+   publishability, removable clauses, and relative domain
    language are review signals rather than automatic rejection rules. If a
    qualified expert still cannot identify a coherent objective and completion
    boundary without inventing scope or ignoring an unrelated requested result,
    the Problem Reviewer rejects the candidate and it stays archived in the run
    directory — there is no decomposition queue and no cross-campaign
    re-issuance.
-7. Always record verification difficulty from 0 to 10 (`verification_difficulty`
-   score plus rationale) as independent-review burden. The score is never a
-   publication threshold. CI availability and answer type are also never
-   admission gates.
-8. Record all naturally acceptable answer types—proof, counterexample,
-   construction, simulation, experiment, measurement, dataset, benchmark result,
-   or another form—as the keys of `verification_contract`, without prescribing
-   a solving route.
+7. Estimate internal verification difficulty from 0 to 10
+   (`verification_difficulty` score plus rationale) directly from the stated
+   problem and inspected literature. It measures residual independent-review
+   burden for a hypothetical completed answer after sound mechanical checks,
+   not solving difficulty. The field is optional and may be omitted or null
+   when unassessed; missing or high scores are never publication gates.
+8. Do not generate acceptance contracts, answer-type lists, CI plans, or
+   verification documents. Do not conduct a separate investigation to design
+   checking procedures. Use the single difficulty prompt and rubric shared by
+   Research and Reviewer; old contract fields remain readable only for
+   historical-record compatibility.
 9. Record affected-field significance as a high/medium/low level and explain
    specifically which knowledge, capability, bound, mechanism, or decision
    would change.
@@ -76,12 +75,15 @@ authors before compilation. The topic limits below apply to the default mode.
 12. Each accepted problem compiles to its own README-first solution
     repository. Topics remain grouping metadata, so several solution repositories
     may share one `topic_id`. Every README has exactly these top-level sections,
-    in order: `Background`, `Problem Statement`, `Current Progress`,
-    `Scientific Significance`, `Answer Types`, `Verification Standard`,
-    `Suggested CI`, and `References`.
+    in order: `Background`, `Problem Statement`, `Current Progress`, and
+    `References`. Known solving difficulties, Scientific Significance, and
+    assessed verification difficulty (score plus rationale) are stored
+    separately in `metadata/problem.json`, never in the README. Omit
+    verification difficulty from metadata when it is missing or null.
 13. Keep structured records, raw evidence, and pool views outside generated
-    solution repositories. Generated repositories remain README-first; add code,
-    data, or CI only when a specific scientific verification contract needs them.
+    solution repositories, except for the assessments explicitly exported
+    to metadata above. Generated repositories remain focused on the question;
+    compilation and publication do not generate verification documents.
 14. The canonical README uses English headings and narrative plus GitLab math
     delimiters (`$...$` and `$$...$$`). Bibliographic titles and exact source
     excerpts may retain their source language. An optional Chinese README must

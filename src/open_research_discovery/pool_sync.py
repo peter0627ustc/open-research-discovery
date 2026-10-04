@@ -62,16 +62,13 @@ def sync_pool(
                     if not line.strip():
                         continue
                     record = json.loads(line)
-                    # Records missing these fields would silently sort last
-                    # under the ranking defaults (unassessed significance,
-                    # difficulty 10), so treat them as stale rather than
-                    # inheriting those defaults.
+                    # Status and significance remain required for existing
+                    # catalog entries; optional difficulty may be unassessed.
                     missing_fields = [
                         field
                         for field in (
                             "status",
                             "significance_level",
-                            "verification_difficulty",
                         )
                         if field not in record
                     ]
@@ -83,6 +80,7 @@ def sync_pool(
                             "from an up-to-date problem manifest or assign "
                             "audited values"
                         )
+                    record.setdefault("verification_difficulty", None)
                     records_by_id[str(record["id"])] = record
 
             # Validate every input before touching the pool so a mid-batch

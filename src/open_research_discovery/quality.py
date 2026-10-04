@@ -1,12 +1,13 @@
 """Problem-quality benchmark: end-to-end quality evaluation of published
-problem-repository manifests.
+problem repositories.
 
-This module scores the finished artifact: the problem.schema manifest plus
-its README projection. Build collects manifests,
+This module scores the solver-visible README, using internal problem records
+only as supporting audit context, never as hidden task requirements. Build
+collects manifests,
 validates them against problem.schema, and freezes citation metadata for every
 identifier they cite. Evaluate runs one blind, offline reviewer agent per case.
 Score applies deterministic mechanical checks (schema validity, hallucination
-counting against the frozen metadata, README contract validation, duplicate
+counting against the frozen metadata, README layout validation, duplicate
 detection) and, when gold labels exist, reports per-dimension accuracy
 against them.
 """
@@ -53,14 +54,27 @@ Score each dimension as an integer from 0 to 3:
   1 = significant defects that a maintainer must fix.
   0 = fundamentally broken; the dimension's central claim does not hold.
 
+Evaluation boundary:
+The solver-visible README is the authority for the task: read its complete
+statement, background, definitions, and current-progress context together.
+Distinguish background results and intermediate milestones from the final
+objective. Internal records and frozen evidence may support citation and
+source checks, but must never supply missing public definitions, assumptions,
+quantifiers, answer requirements, or completion conditions. If the README is
+missing, report the unavailable public input; do not reconstruct it from an
+internal record. Internal audit assertions are claims to assess, not proof
+that a source supports them. Frozen bibliographic metadata alone cannot
+establish a paper's problem formulation or its current solution status.
+
 Dimensions:
 1. citation_accuracy — every cited identifier with frozen status "found"
    exists and has manifest metadata/paraphrase matching that frozen metadata.
    Status "not_found" is a citation defect; a citation whose frozen metadata
    describes a different work (wrong title or disjoint authors) is critical.
-2. openness_argument — the audited openness outcome and the previous-progress
-   narrative are genuinely supported by the cited references rather than
-   asserted.
+2. openness_argument — the public openness claims and current-progress
+   narrative are supported by the available cited evidence rather than
+   asserted. Internal previous-progress notes are supporting audit context,
+   not a substitute for missing public explanation.
 3. scope_fidelity — the problem statement does not silently narrow or drift
    from the source question, and its requested results form a coherent
    scientific objective with a completion boundary recognizable to a
@@ -68,13 +82,18 @@ Dimensions:
    several linked methods, deliverables, or potential publications. Treat
    relative domain language as a defect only when sources, context, and field
    conventions still leave a material ambiguity in what the objective means.
-4. verification_executability — a qualified domain expert can apply the
-   per-type verification contracts to the complete stated scientific
+4. verification_executability — a qualified domain expert can judge whether
+   a hypothetical completed answer addresses the complete public scientific
    objective without inventing missing scope, ignoring an unrelated requested
    result, circularly assuming the conclusion, or accepting a proxy or
    materially narrower target. Holistic proof review, scientific judgment,
-   and independent replication are executable verification. Do not penalize
-   absent or partial CI when the expert-review procedure is clear.
+   and independent replication are valid forms of assessment. Do not require
+   acceptance contracts, answer-type lists, a prescribed checking procedure,
+   CI, or verification documents, and do not invent any of them. Their absence
+   is not a defect. A missing or high internal verification-difficulty score
+   is not a quality defect. Assess any conditions actually present in the
+   README as public requirements; hidden conditions cannot repair or add to
+   them. Do not solve the problem or design a checker.
 5. evidence_relevance — each cited reference genuinely bears on this
    problem's status or formulation.
 
@@ -873,15 +892,21 @@ def validate_quality_dataset(
 
 def _evaluation_prompt(case: dict[str, Any]) -> str:
     dossier = {
-        "problem": case["problem"],
         "readme_markdown": case["readme_markdown"],
+        "internal_audit_context": {
+            key: case["problem"][key]
+            for key in ("references", "previous_progress")
+            if key in case["problem"]
+        },
         "frozen_evidence": case["frozen_evidence"],
     }
     rendered = json.dumps(dossier, ensure_ascii=False, indent=2, sort_keys=True)
     return f"""\
 You are the evaluated Quality Reviewer in an offline problem-quality
 benchmark. You are auditing one published open-research-problem repository:
-its problem manifest (the content authority) and its README projection.
+its solver-visible README, with supporting internal audit context and frozen
+citation evidence. Only the README defines the solver's task. Hidden records
+cannot repair missing public requirements or impose additional requirements.
 Use only the frozen dossier below. Do not search the web, call LKM, or use
 outside evidence; do not read any repository files, because the dossier below
 is your only input. Citation cross-checks must rely exclusively on the
@@ -896,7 +921,7 @@ Judge exactly five dimensions, each scored 0-3, with concrete issues:
 4. verification_executability;
 5. evidence_relevance.
 
-{case["task"]["rubric"]}
+{QUALITY_RUBRIC}
 Return one JSON object matching the supplied schema. Set case_id exactly to
 {case["case_id"]}.
 
@@ -953,7 +978,30 @@ def evaluate_quality(
         case_dir = out_dir / "predictions" / case_id
         prediction_path = case_dir / "prediction.json"
         metadata_path = case_dir / "metadata.json"
-        if resume and prediction_path.is_file():
+        # Stored datasets may carry an old contract-based rubric. Evaluate with
+        # the current policy, and never reuse predictions from a different
+        # prompt, input, or output schema merely because their JSON is valid.
+        prompt = _evaluation_prompt(case)
+        fingerprints = {
+            "input_sha256": file_sha256(input_path),
+            "evaluation_prompt_sha256": hashlib.sha256(
+                prompt.encode("utf-8")
+            ).hexdigest(),
+            "prediction_schema_sha256": file_sha256(prediction_schema),
+        }
+        existing_metadata = (
+            _load_object(metadata_path)
+            if resume and metadata_path.is_file()
+            else {}
+        )
+        if (
+            resume
+            and prediction_path.is_file()
+            and all(
+                existing_metadata.get(key) == value
+                for key, value in fingerprints.items()
+            )
+        ):
             prediction = _load_object(prediction_path)
             _validate(prediction, prediction_schema)
             if prediction.get("case_id") != case_id:
@@ -972,7 +1020,7 @@ def evaluate_quality(
             }
         result: AgentRun = runner.run(
             role="quality-review",
-            prompt=_evaluation_prompt(case),
+            prompt=prompt,
             schema_path=prediction_schema,
             output_path=prediction_path,
             events_path=case_dir / "events.jsonl",
@@ -985,7 +1033,7 @@ def evaluate_quality(
         metadata = {
             **result.metadata,
             "input_path": str(input_path),
-            "input_sha256": file_sha256(input_path),
+            **fingerprints,
             "network_policy": "offline",
         }
         dump_json(metadata_path, metadata)
@@ -1015,6 +1063,9 @@ def evaluate_quality(
         "benchmark_manifest_sha256": file_sha256(manifest_path),
         "evidence_mode": "frozen-evidence",
         "network_policy": "offline",
+        "rubric_sha256": hashlib.sha256(
+            QUALITY_RUBRIC.encode("utf-8")
+        ).hexdigest(),
         "case_count": len(completed),
         "predictions": completed,
     }

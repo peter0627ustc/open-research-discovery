@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -135,6 +136,52 @@ def strict_output_schema_errors(
                     )
                 )
     return errors
+
+
+def codex_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Encode nullable optional fields for Codex without changing local validation.
+
+    Codex requires all object properties to be required at the wire boundary.
+    A locally optional, nullable field can be required there with null meaning
+    unassessed. Other unsupported schemas still fail the strict pre-check.
+    """
+    encoded = copy.deepcopy(schema)
+
+    def walk(node: dict[str, Any]) -> None:
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            required = node.get("required", [])
+            if isinstance(required, list):
+                required = list(required)
+                for name, child in properties.items():
+                    if not isinstance(child, dict):
+                        continue
+                    types = child.get("type")
+                    nullable = types == "null" or (
+                        isinstance(types, list) and "null" in types
+                    )
+                    if name not in required and nullable:
+                        required.append(name)
+                if required or "required" in node:
+                    node["required"] = required
+            for child in properties.values():
+                if isinstance(child, dict):
+                    walk(child)
+        for keyword in ("items", "additionalProperties"):
+            child = node.get(keyword)
+            if isinstance(child, dict):
+                walk(child)
+        for keyword in ("allOf", "anyOf", "oneOf"):
+            for child in node.get(keyword, []):
+                if isinstance(child, dict):
+                    walk(child)
+        for keyword in ("$defs", "definitions"):
+            for child in (node.get(keyword) or {}).values():
+                if isinstance(child, dict):
+                    walk(child)
+
+    walk(encoded)
+    return encoded
 
 
 def file_sha256(path: Path) -> str:
@@ -396,13 +443,18 @@ class CodexRunner(_HeadlessCliRunner):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         events_path.parent.mkdir(parents=True, exist_ok=True)
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        api_schema = codex_output_schema(schema)
         if self.structured_output_mode == "api" and (
-            strict_errors := strict_output_schema_errors(schema)
+            strict_errors := strict_output_schema_errors(api_schema)
         ):
             raise AgentOutputError(
                 "output schema is incompatible with Codex structured output: "
                 + "; ".join(strict_errors)
             )
+        api_schema_path = schema_path
+        if self.structured_output_mode == "api" and api_schema != schema:
+            api_schema_path = output_path.with_suffix(".codex-schema.json")
+            dump_json(api_schema_path, api_schema)
         networked = role in self.NETWORKED_ROLES
         effective_sandbox = (
             self.networked_sandbox if networked else self.sandbox
@@ -430,7 +482,7 @@ class CodexRunner(_HeadlessCliRunner):
             ]
             if self.structured_output_mode == "api":
                 command.extend(
-                    ["--output-schema", str(schema_path.resolve())]
+                    ["--output-schema", str(api_schema_path.resolve())]
                 )
             command.extend(
                 [
