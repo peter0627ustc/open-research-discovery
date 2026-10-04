@@ -774,7 +774,9 @@ def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficu
         ]
         metadata = json.loads((repo / "metadata/problem.json").read_text(encoding="utf-8"))
         metadata_records.append(metadata)
-        assert set(metadata) == {"solution_difficulty", "scientific_significance"}
+        assert set(metadata) == {
+            "solution_difficulty", "scientific_significance", "verification_difficulty"
+        }
         assert not (repo / "docs/verification_reference.md").exists()
         assert not (repo / "docs/evaluation-rubric.md").exists()
         text = readme.read_text(encoding="utf-8")
@@ -784,6 +786,7 @@ def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficu
         ] == list(README_SECTIONS)
         assert "The verification contract below evaluates answers" not in text
         assert "Affected-field significance:" not in text
+        assert metadata["verification_difficulty"]["rationale"] not in text
     combined = "\n".join(texts)
     assert "finite-size artifact" not in combined
     assert "finite-size artifact" in json.dumps(metadata_records)
@@ -807,6 +810,12 @@ def test_topic_campaign_builds_one_solution_repo_per_problem_and_ignores_difficu
         assert problem["repository"]["slug"] == Path(
             matching["solution_repo"]
         ).name
+        metadata = json.loads(
+            (Path(matching["solution_repo"]) / "metadata/problem.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert metadata["verification_difficulty"] == problem["verification_difficulty"]
     invalid_problem = yaml.safe_load(manifests[0].read_text(encoding="utf-8"))
     invalid_problem["verification_difficulty"]["score"] = 11
     invalid_manifest = tmp_path / "invalid-problem.yaml"

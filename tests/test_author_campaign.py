@@ -371,7 +371,11 @@ def test_end_to_end_same_author_dedup_resume_and_increment(tmp_path):
     assert metadata == {
         "solution_difficulty": entry["problem"]["solution_difficulty"],
         "scientific_significance": entry["problem"]["scientific_significance"],
+        "verification_difficulty": entry["problem"]["verification_difficulty"],
     }
+    assert entry["problem"]["verification_difficulty"]["rationale"] not in (
+        repo / "README.md"
+    ).read_text()
     assert not (repo / "docs").exists()
     with pytest.raises(CampaignError, match="dedup"):
         pipeline.compile_pending()
